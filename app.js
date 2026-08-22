@@ -156,6 +156,11 @@
     els.deleteEventButton = byId("deleteEventButton");
     els.cancelEventButton = byId("cancelEventButton");
     els.colorOptions = byId("colorOptions");
+    els.openCategoryEditorButton = byId("openCategoryEditorButton");
+    els.eventCategoryEditorModal = byId("eventCategoryEditorModal");
+    els.closeCategoryEditorButton = byId("closeCategoryEditorButton");
+    els.eventCategorySettingsList = byId("eventCategorySettingsList");
+    els.eventAddCategoryButton = byId("eventAddCategoryButton");
 
     els.choiceModal = byId("choiceModal");
     els.choiceTitle = byId("choiceTitle");
@@ -241,6 +246,18 @@
     els.eventForm.addEventListener("submit", handleEventSubmit);
     els.deleteEventButton.addEventListener("click", handleDeleteEvent);
     els.colorOptions.addEventListener("click", handleEventCategoryClick);
+    els.openCategoryEditorButton.addEventListener("click", openEventCategoryEditor);
+    els.closeCategoryEditorButton.addEventListener("click", closeEventCategoryEditor);
+    els.eventCategoryEditorModal.addEventListener("click", (event) => {
+      if (event.target === els.eventCategoryEditorModal) {
+        closeEventCategoryEditor();
+      }
+    });
+    els.eventCategorySettingsList.addEventListener("click", handleCategorySettingsClick);
+    els.eventCategorySettingsList.addEventListener("input", handleCategoryNameInput);
+    els.eventCategorySettingsList.addEventListener("focusin", handleCategoryNameFocus);
+    els.eventCategorySettingsList.addEventListener("focusout", handleCategoryNameBlur);
+    els.eventAddCategoryButton.addEventListener("click", handleAddCategory);
     els.eventTimeModeGroup.addEventListener("click", handleEventTimeModeClick);
     els.eventStart.addEventListener("input", updateEventReminderAvailability);
     els.eventStart.addEventListener("change", updateEventReminderAvailability);
@@ -282,7 +299,9 @@
       if (event.key !== "Escape") {
         return;
       }
-      if (!els.choiceModal.hidden) {
+      if (!els.eventCategoryEditorModal.hidden) {
+        closeEventCategoryEditor();
+      } else if (!els.choiceModal.hidden) {
         closeChoiceModal();
       } else if (!els.importModal.hidden) {
         closeImportModal();
@@ -753,6 +772,20 @@
   }
 
   function renderCategorySettings(focusKey) {
+    renderCategoryEditorList(els.categorySettingsList, els.addCategoryButton, focusKey);
+  }
+
+  function renderEventCategoryEditor(focusKey) {
+    renderCategoryEditorList(els.eventCategorySettingsList, els.eventAddCategoryButton, focusKey);
+  }
+
+  function renderCategoryEditors(focusKey) {
+    const focusEventEditor = focusKey && !els.eventCategoryEditorModal.hidden;
+    renderCategoryEditorList(els.categorySettingsList, els.addCategoryButton, focusEventEditor ? null : focusKey);
+    renderCategoryEditorList(els.eventCategorySettingsList, els.eventAddCategoryButton, focusEventEditor ? focusKey : null);
+  }
+
+  function renderCategoryEditorList(listElement, addButton, focusKey) {
     const categories = getCategories();
     const rows = categories.map((category) => {
       const row = document.createElement("div");
@@ -794,12 +827,12 @@
       return row;
     });
 
-    els.categorySettingsList.replaceChildren(...rows);
-    els.addCategoryButton.disabled = categories.length >= CATEGORY_MAX_COUNT;
+    listElement.replaceChildren(...rows);
+    addButton.disabled = categories.length >= CATEGORY_MAX_COUNT;
 
     if (focusKey) {
       window.setTimeout(() => {
-        const input = els.categorySettingsList.querySelector(`.category-name-input[data-category-key="${cssEscape(focusKey)}"]`);
+        const input = listElement.querySelector(`.category-name-input[data-category-key="${cssEscape(focusKey)}"]`);
         if (input) {
           input.focus();
           input.select();
@@ -1037,12 +1070,28 @@
     return fallback;
   }
 
+  function categoryEditorListForTarget(target) {
+    if (els.categorySettingsList.contains(target)) {
+      return els.categorySettingsList;
+    }
+    if (els.eventCategorySettingsList.contains(target)) {
+      return els.eventCategorySettingsList;
+    }
+    return null;
+  }
+
   function handleCategorySettingsClick(event) {
-    if (!(event.target instanceof Element)) {
+    const target = event.target;
+    if (!(target instanceof Element)) {
       return;
     }
-    const paletteButton = event.target.closest(".palette-color-button");
-    if (paletteButton && els.categorySettingsList.contains(paletteButton)) {
+    const listElement = categoryEditorListForTarget(target);
+    if (!listElement) {
+      return;
+    }
+
+    const paletteButton = target.closest(".palette-color-button");
+    if (paletteButton && listElement.contains(paletteButton)) {
       const category = findCategory(paletteButton.dataset.categoryKey);
       const color = normalizeHexColor(paletteButton.dataset.color);
       if (category && color && category.color !== color) {
@@ -1051,20 +1100,20 @@
         renderCategoryDependents();
       }
       state.categoryPaletteFor = null;
-      renderCategorySettings();
+      renderCategoryEditors();
       return;
     }
 
-    const swatchButton = event.target.closest(".category-swatch-button");
-    if (swatchButton && els.categorySettingsList.contains(swatchButton)) {
+    const swatchButton = target.closest(".category-swatch-button");
+    if (swatchButton && listElement.contains(swatchButton)) {
       const key = swatchButton.dataset.categoryKey;
       state.categoryPaletteFor = state.categoryPaletteFor === key ? null : key;
-      renderCategorySettings();
+      renderCategoryEditors();
       return;
     }
 
-    const deleteButton = event.target.closest(".category-delete-button");
-    if (deleteButton && els.categorySettingsList.contains(deleteButton)) {
+    const deleteButton = target.closest(".category-delete-button");
+    if (deleteButton && listElement.contains(deleteButton)) {
       deleteCategory(deleteButton.dataset.categoryKey);
     }
   }
@@ -1097,6 +1146,7 @@
     }
     category.label = nextLabel;
     saveSettings();
+    renderInactiveCategoryEditors(input);
     renderCategoryDependents();
   }
 
@@ -1116,6 +1166,7 @@
       if (category.label !== previousLabel) {
         category.label = previousLabel;
         saveSettings();
+        renderInactiveCategoryEditors(input);
         renderCategoryDependents();
       }
       input.value = previousLabel;
@@ -1125,6 +1176,7 @@
     if (category.label !== nextLabel) {
       category.label = nextLabel;
       saveSettings();
+      renderInactiveCategoryEditors(input);
       renderCategoryDependents();
     }
     input.value = category.label;
@@ -1136,6 +1188,15 @@
       return null;
     }
     return target;
+  }
+
+  function renderInactiveCategoryEditors(activeInput) {
+    if (!els.categorySettingsList.contains(activeInput)) {
+      renderCategorySettings();
+    }
+    if (!els.eventCategoryEditorModal.hidden && !els.eventCategorySettingsList.contains(activeInput)) {
+      renderEventCategoryEditor();
+    }
   }
 
   function handleAddCategory() {
@@ -1152,7 +1213,7 @@
     categories.push(category);
     state.categoryPaletteFor = null;
     saveSettings();
-    renderCategorySettings(category.key);
+    renderCategoryEditors(category.key);
     renderCategoryDependents();
   }
 
@@ -1190,7 +1251,7 @@
       els.eventColor.value = fallback.key;
     }
     saveSettings();
-    renderCategorySettings();
+    renderCategoryEditors();
     renderCategoryDependents();
   }
 
@@ -1205,7 +1266,7 @@
       return;
     }
     state.categoryPaletteFor = null;
-    renderCategorySettings();
+    renderCategoryEditors();
   }
 
   function renderCategoryDependents() {
@@ -1333,7 +1394,28 @@
     setTimeout(() => els.eventTitle.focus(), 0);
   }
 
+  function openEventCategoryEditor() {
+    state.categoryPaletteFor = null;
+    els.eventCategoryEditorModal.hidden = false;
+    renderCategoryEditors();
+    setTimeout(() => els.closeCategoryEditorButton.focus(), 0);
+  }
+
+  function closeEventCategoryEditor(options) {
+    const restoreFocus = !options || options.restoreFocus !== false;
+    const wasOpen = !els.eventCategoryEditorModal.hidden;
+    els.eventCategoryEditorModal.hidden = true;
+    state.categoryPaletteFor = null;
+    renderCategoryEditors();
+    renderEventColorOptions();
+    setSelectedColor(els.eventColor.value);
+    if (wasOpen && restoreFocus && !els.eventModal.hidden) {
+      setTimeout(() => els.openCategoryEditorButton.focus(), 0);
+    }
+  }
+
   function closeEventModal() {
+    closeEventCategoryEditor({ restoreFocus: false });
     els.eventModal.hidden = true;
     state.editing = null;
     els.formError.textContent = "";

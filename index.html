@@ -206,7 +206,7 @@
           <div id="eventTimeModeGroup" class="time-mode-options" role="group" aria-label="時間帯">
             <button class="time-mode-button is-selected" type="button" data-time-mode="timed" aria-pressed="true">時刻指定</button>
             <button class="time-mode-button" type="button" data-time-mode="allday" aria-pressed="false">終日</button>
-            <button class="time-mode-button" type="button" data-time-mode="am" aria-pressed="false">午前中</button>
+            <button class="time-mode-button" type="button" data-time-mode="am" aria-pressed="false">午前</button>
             <button class="time-mode-button" type="button" data-time-mode="pm" aria-pressed="false">午後</button>
           </div>
         </fieldset>
@@ -221,7 +221,10 @@
           </label>
         </div>
         <fieldset class="color-field">
-          <legend>カテゴリ</legend>
+          <legend class="color-field-header">
+            <span>カテゴリ</span>
+            <button id="openCategoryEditorButton" class="secondary-button category-edit-button" type="button">編集</button>
+          </legend>
           <input id="eventColor" type="hidden" value="work">
           <div id="colorOptions" class="color-options"></div>
         </fieldset>
@@ -273,6 +276,19 @@
       <h2 id="choiceTitle"></h2>
       <p id="choiceMessage" class="muted-text"></p>
       <div id="choiceActions" class="choice-actions"></div>
+    </section>
+  </div>
+
+  <div id="eventCategoryEditorModal" class="modal-backdrop category-editor-backdrop" hidden>
+    <section class="modal-card category-editor-card" aria-labelledby="eventCategoryEditorTitle" role="dialog" aria-modal="true">
+      <div class="sheet-header">
+        <div>
+          <h2 id="eventCategoryEditorTitle">カテゴリ編集</h2>
+        </div>
+        <button id="closeCategoryEditorButton" class="icon-button" type="button" aria-label="閉じる">×</button>
+      </div>
+      <div id="eventCategorySettingsList" class="category-settings-list"></div>
+      <button id="eventAddCategoryButton" class="secondary-button category-add-button full-button" type="button">＋カテゴリを追加</button>
     </section>
   </div>
 

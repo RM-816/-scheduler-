@@ -1198,6 +1198,23 @@ body[data-view="settings"] .add-fab {
   padding: 16px;
 }
 
+.category-editor-backdrop {
+  z-index: 70;
+  padding: 12px;
+}
+
+.category-editor-card {
+  display: flex;
+  width: min(100%, 390px);
+  max-height: min(88dvh, 560px);
+  flex-direction: column;
+  gap: 12px;
+}
+
+.category-editor-card .sheet-header {
+  margin-bottom: 0;
+}
+
 .choice-card {
   max-width: 420px;
   padding: 18px;
@@ -1297,6 +1314,22 @@ body[data-view="settings"] .add-fab {
   color: #374151;
   font-size: 12px;
   font-weight: 800;
+}
+
+.color-field-header {
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.category-edit-button {
+  min-height: 28px;
+  flex: 0 0 auto;
+  padding: 0 10px;
+  font-size: 12px;
 }
 
 .color-field,
