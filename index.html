@@ -52,6 +52,10 @@
           <button id="nextMonth" class="icon-button" type="button" aria-label="翌月">›</button>
         </div>
         <button id="todayMonth" class="secondary-button" type="button">今日</button>
+        <div id="welcomeCard" class="welcome-card" hidden>
+          <p>👋 はじめまして！ 下の入力欄に「明日15時 歯医者」のように話しかけると予定が入ります。詳しくは <button id="welcomeHelpLink" class="welcome-help-link" type="button">使い方</button> へ</p>
+          <button id="closeWelcomeCard" class="welcome-close" type="button" aria-label="ウェルカムカードを閉じる">×</button>
+        </div>
         <div class="weekday-row" aria-hidden="true">
           <span>日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span>土</span>
         </div>
@@ -111,6 +115,13 @@
               <input id="defaultReminderCustom" class="reminder-custom-input" type="number" min="1" max="10080" step="1" inputmode="numeric" placeholder="分" hidden>
             </span>
           </label>
+          <button id="openHelpButton" class="setting-row setting-link-row" type="button">
+            <span>
+              <strong>使い方</strong>
+              <small>予定の追加、取込、共有、通知の使い方を確認します</small>
+            </span>
+            <span class="setting-chevron" aria-hidden="true">&gt;</span>
+          </button>
           <section class="category-settings" aria-labelledby="categorySettingsTitle">
             <div class="category-settings-header">
               <h3 id="categorySettingsTitle">カテゴリ</h3>
@@ -167,6 +178,68 @@
         <span>設定</span>
       </button>
     </nav>
+  </div>
+
+  <div id="helpModal" class="modal-backdrop help-backdrop" hidden>
+    <section class="modal-card help-modal" aria-labelledby="helpModalTitle" role="dialog" aria-modal="true">
+      <div class="sheet-header help-header">
+        <div>
+          <h2 id="helpModalTitle">使い方</h2>
+          <p class="muted-text">schedulerで予定を入れて管理する基本操作です。</p>
+        </div>
+        <button id="closeHelpModal" class="icon-button" type="button" aria-label="使い方を閉じる">×</button>
+      </div>
+
+      <div id="helpContent" class="help-content">
+        <ol class="help-sections">
+          <li class="help-section">
+            <h3><span>1</span>予定を追加する</h3>
+            <p>画面下の入力欄に話し言葉で入力すると、内容を読み取って予定フォームに入ります。マイクボタンで音声入力、右下の「＋」ボタンからフォーム入力もできます。</p>
+            <div class="help-examples" aria-label="入力例">
+              <code>明日15時 歯医者</code>
+              <code>来週月曜昼 会議</code>
+              <code>毎週金曜19時 ジム</code>
+              <code>9/1 午前 参観日</code>
+              <code>明日終日 出張</code>
+            </div>
+          </li>
+          <li class="help-section">
+            <h3><span>2</span>写真・テキストから取り込む</h3>
+            <p>画面下のカメラボタンから「写真を選ぶ」を押すと、紙の予定表やプリントの文字を読み取って予定候補にします。印刷文字向けで、手書きは苦手です。</p>
+            <p>文字をコピーして貼り付け、「解析」でも取り込めます。1行に1件ずつ入力し、候補を確認してチェックした分だけ登録します。</p>
+          </li>
+          <li class="help-section">
+            <h3><span>3</span>カレンダーの見方</h3>
+            <p>下のタブで月表示と週表示を切り替えます。月表示で日付をタップすると、その日の予定一覧が開きます。</p>
+            <p>予定チップには時刻や「終日」「午前」「午後」が表示され、今日の日付は青い丸で表示されます。</p>
+          </li>
+          <li class="help-section">
+            <h3><span>4</span>リマインド通知</h3>
+            <p>設定で通知をONにすると、予定ごとに「何分前に知らせるか」を選べます。なし、定刻、5分前から1日前までの候補に加えて、カスタム分数も入力できます。</p>
+            <p>通知はアプリ（ブラウザ）を開いている間に表示されます。終日予定は通知対象外です。</p>
+          </li>
+          <li class="help-section">
+            <h3><span>5</span>予定を共有する</h3>
+            <p>予定を開いて「共有」を押すと、LINEやメールでリンクを送れます。日付画面の共有ボタンでは、その日の予定をまとめて共有できます。</p>
+            <p>受け取った人はリンクを開き、「追加」を押すだけで予定を取り込めます。</p>
+          </li>
+          <li class="help-section">
+            <h3><span>6</span>カテゴリを自分好みに</h3>
+            <p>予定フォームのカテゴリ欄にある「編集」、または設定の「カテゴリ」から、名前と色を変更・追加・削除できます。</p>
+          </li>
+          <li class="help-section">
+            <h3><span>7</span>スマホでアプリのように使う</h3>
+            <p>iPhoneはSafariで開き、共有ボタンから「ホーム画面に追加」を選びます。AndroidはChromeで開き、メニュー(⋮)から「ホーム画面に追加」を選びます。</p>
+            <p>追加後はアイコンから全画面で起動でき、オフラインでも開けます。</p>
+          </li>
+          <li class="help-section">
+            <h3><span>8</span>データについて</h3>
+            <p>予定はこの端末のブラウザ内にだけ保存され、サーバーには送られません。端末やブラウザを変えるとデータは引き継がれません。</p>
+            <p>初期化したいときは、設定の「データを全削除」を使います。</p>
+          </li>
+        </ol>
+      </div>
+    </section>
   </div>
 
   <div id="dayPanelBackdrop" class="panel-backdrop" hidden>

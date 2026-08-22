@@ -111,6 +111,9 @@
     els.todayMonth = byId("todayMonth");
     els.monthHeading = byId("monthHeading");
     els.monthGrid = byId("monthGrid");
+    els.welcomeCard = byId("welcomeCard");
+    els.closeWelcomeCard = byId("closeWelcomeCard");
+    els.welcomeHelpLink = byId("welcomeHelpLink");
 
     els.prevWeek = byId("prevWeek");
     els.nextWeek = byId("nextWeek");
@@ -130,6 +133,7 @@
     els.categorySettingsList = byId("categorySettingsList");
     els.addCategoryButton = byId("addCategoryButton");
     els.clearDataButton = byId("clearDataButton");
+    els.openHelpButton = byId("openHelpButton");
 
     els.importButton = byId("importButton");
     els.chatBar = byId("chatBar");
@@ -173,6 +177,10 @@
     els.closeCategoryEditorButton = byId("closeCategoryEditorButton");
     els.eventCategorySettingsList = byId("eventCategorySettingsList");
     els.eventAddCategoryButton = byId("eventAddCategoryButton");
+
+    els.helpModal = byId("helpModal");
+    els.helpContent = byId("helpContent");
+    els.closeHelpModal = byId("closeHelpModal");
 
     els.choiceModal = byId("choiceModal");
     els.choiceTitle = byId("choiceTitle");
@@ -230,6 +238,8 @@
       state.selectedDate = formatDate(today);
       renderMonth();
     });
+    els.closeWelcomeCard.addEventListener("click", dismissWelcomeCard);
+    els.welcomeHelpLink.addEventListener("click", openHelpModal);
 
     els.prevWeek.addEventListener("click", () => {
       state.currentWeekStart = addDays(state.currentWeekStart, -7);
@@ -299,6 +309,14 @@
     els.categorySettingsList.addEventListener("focusout", handleCategoryNameBlur);
     els.addCategoryButton.addEventListener("click", handleAddCategory);
     els.clearDataButton.addEventListener("click", handleClearData);
+    els.openHelpButton.addEventListener("click", openHelpModal);
+
+    els.closeHelpModal.addEventListener("click", closeHelpModal);
+    els.helpModal.addEventListener("click", (event) => {
+      if (event.target === els.helpModal) {
+        closeHelpModal();
+      }
+    });
 
     els.choiceModal.addEventListener("click", (event) => {
       if (event.target === els.choiceModal) {
@@ -343,6 +361,8 @@
       }
       if (!els.eventCategoryEditorModal.hidden) {
         closeEventCategoryEditor();
+      } else if (!els.helpModal.hidden) {
+        closeHelpModal();
       } else if (!els.sharedEventsModal.hidden) {
         cancelSharedEvents();
       } else if (!els.shareLinkModal.hidden) {
@@ -415,6 +435,7 @@
     const year = state.currentMonth.getFullYear();
     const month = state.currentMonth.getMonth();
     els.monthHeading.textContent = `${year}年${month + 1}月`;
+    renderWelcomeCard();
 
     const firstDay = new Date(year, month, 1);
     const lastDay = new Date(year, month + 1, 0);
@@ -487,6 +508,33 @@
 
     els.monthGrid.replaceChildren(...nodes);
     trimMonthEventStacks();
+  }
+
+  function shouldShowWelcomeCard() {
+    return state.events.length === 0 && !state.settings.welcomeDismissed;
+  }
+
+  function renderWelcomeCard() {
+    els.welcomeCard.hidden = !shouldShowWelcomeCard();
+  }
+
+  function dismissWelcomeCard() {
+    state.settings.welcomeDismissed = true;
+    saveSettings();
+    renderMonth();
+  }
+
+  function openHelpModal() {
+    els.helpModal.hidden = false;
+    els.helpContent.scrollTop = 0;
+    window.setTimeout(() => {
+      els.helpContent.scrollTop = 0;
+      els.closeHelpModal.focus();
+    }, 0);
+  }
+
+  function closeHelpModal() {
+    els.helpModal.hidden = true;
   }
 
   function scheduleMonthResizeRender() {
@@ -3486,6 +3534,7 @@
     return {
       notifications: false,
       defaultReminder: DEFAULT_REMINDER_MINUTES,
+      welcomeDismissed: false,
       notified: {},
       categories: cloneDefaultCategories(),
       [CATEGORY_MIGRATION_FLAG]: false
@@ -3500,7 +3549,11 @@
     }
     let changed = false;
     settings.notifications = Boolean(raw.notifications);
+    settings.welcomeDismissed = Boolean(raw.welcomeDismissed);
     if (!Object.prototype.hasOwnProperty.call(raw, "defaultReminder")) {
+      changed = true;
+    }
+    if (!Object.prototype.hasOwnProperty.call(raw, "welcomeDismissed")) {
       changed = true;
     }
     settings.defaultReminder = normalizeReminderValue(
