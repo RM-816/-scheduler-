@@ -31,6 +31,16 @@
   const DEFAULT_REMINDER_MINUTES = 10;
   const REMINDER_CUSTOM_MAX_MINUTES = 10080;
   const REMINDER_PRESET_VALUES = [0, 5, 10, 15, 30, 60, 120, 1440];
+  const VALID_TIME_MODES = new Set(["timed", "allday", "am", "pm"]);
+  const PERIOD_TIME_MODE_RANGES = {
+    am: { startTime: "09:00", endTime: "12:00" },
+    pm: { startTime: "13:00", endTime: "17:00" }
+  };
+  const TIME_MODE_LABELS = {
+    allday: "終日",
+    am: "午前",
+    pm: "午後"
+  };
 
   const state = {
     view: "month",
@@ -131,6 +141,9 @@
     els.eventForm = byId("eventForm");
     els.eventTitle = byId("eventTitle");
     els.eventDate = byId("eventDate");
+    els.eventTimeModeGroup = byId("eventTimeModeGroup");
+    els.eventTimeModeButtons = Array.from(document.querySelectorAll("[data-time-mode]"));
+    els.eventTimeFields = byId("eventTimeFields");
     els.eventStart = byId("eventStart");
     els.eventEnd = byId("eventEnd");
     els.eventColor = byId("eventColor");
@@ -228,6 +241,7 @@
     els.eventForm.addEventListener("submit", handleEventSubmit);
     els.deleteEventButton.addEventListener("click", handleDeleteEvent);
     els.colorOptions.addEventListener("click", handleEventCategoryClick);
+    els.eventTimeModeGroup.addEventListener("click", handleEventTimeModeClick);
     els.eventStart.addEventListener("input", updateEventReminderAvailability);
     els.eventStart.addEventListener("change", updateEventReminderAvailability);
     els.eventReminder.addEventListener("change", handleEventReminderChange);
@@ -567,7 +581,9 @@
           chip.type = "button";
           chip.className = "all-day-chip";
           applyCategoryColor(chip, occurrence.color);
-          chip.textContent = occurrence.title;
+          chip.textContent = normalizeTimeMode(occurrence.timeMode) === "allday"
+            ? `終日 ${occurrence.title}`
+            : occurrence.title;
           chip.addEventListener("click", () => openEventForm({
             eventId: occurrence.id,
             occurrenceDate: occurrence.occurrenceDate
@@ -824,6 +840,21 @@
     setSelectedColor(button.dataset.categoryKey);
   }
 
+  function handleEventTimeModeClick(event) {
+    if (!(event.target instanceof Element)) {
+      return;
+    }
+    const button = event.target.closest("[data-time-mode]");
+    if (!button || !els.eventTimeModeGroup.contains(button)) {
+      return;
+    }
+    const nextMode = normalizeTimeMode(button.dataset.timeMode);
+    if (nextMode === readEventTimeMode()) {
+      return;
+    }
+    setEventTimeMode(nextMode);
+  }
+
   function handleEventReminderChange() {
     updateEventReminderAvailability();
     if (els.eventReminder.value === "custom") {
@@ -859,11 +890,87 @@
     updateReminderCustomVisibility(els.defaultReminderSelect, els.defaultReminderCustom, disabled);
   }
 
+  function setEventTimeMode(mode, options) {
+    const nextMode = normalizeTimeMode(mode);
+    const keepTimedValues = Boolean(options && options.keepTimedValues);
+    els.eventTimeModeButtons.forEach((button) => {
+      const selected = button.dataset.timeMode === nextMode;
+      button.classList.toggle("is-selected", selected);
+      button.setAttribute("aria-pressed", selected ? "true" : "false");
+    });
+
+    const isTimed = nextMode === "timed";
+    els.eventTimeFields.hidden = !isTimed;
+    els.eventStart.disabled = !isTimed;
+    els.eventEnd.disabled = !isTimed;
+    if (isTimed) {
+      if (!keepTimedValues) {
+        els.eventStart.value = "";
+        els.eventEnd.value = "";
+      }
+    } else if (nextMode === "allday") {
+      els.eventStart.value = "";
+      els.eventEnd.value = "";
+    } else {
+      const range = PERIOD_TIME_MODE_RANGES[nextMode];
+      els.eventStart.value = range.startTime;
+      els.eventEnd.value = range.endTime;
+    }
+
+    updateEventReminderAvailability();
+  }
+
+  function readEventTimeMode() {
+    const selected = els.eventTimeModeButtons.find((button) => button.classList.contains("is-selected"));
+    return normalizeTimeMode(selected ? selected.dataset.timeMode : "timed");
+  }
+
+  function normalizeTimeMode(value) {
+    return VALID_TIME_MODES.has(value) ? value : "timed";
+  }
+
+  function normalizeTimeSlot(value) {
+    return value === "allday" || value === "am" || value === "pm" ? value : null;
+  }
+
+  function timeModeFromPreset(preset) {
+    if (!preset || typeof preset !== "object") {
+      return "timed";
+    }
+    return normalizeTimeSlot(preset.timeSlot) || normalizeTimeMode(preset.timeMode);
+  }
+
+  function eventTimesForMode(timeMode, startTime, endTime) {
+    const mode = normalizeTimeMode(timeMode);
+    if (mode === "allday") {
+      return { startTime: null, endTime: null };
+    }
+    if (mode === "am" || mode === "pm") {
+      return { ...PERIOD_TIME_MODE_RANGES[mode] };
+    }
+    return {
+      startTime,
+      endTime
+    };
+  }
+
+  function periodTimeModeLabel(timeMode) {
+    return TIME_MODE_LABELS[normalizeTimeMode(timeMode)] || "";
+  }
+
   function updateEventReminderAvailability() {
-    const hasStartTime = isValidTimeString(els.eventStart.value);
+    const timeMode = readEventTimeMode();
+    const hasStartTime = timeMode !== "allday" && (
+      timeMode === "am" ||
+      timeMode === "pm" ||
+      isValidTimeString(els.eventStart.value)
+    );
     els.eventReminder.disabled = !hasStartTime;
     els.eventReminderUnavailable.hidden = hasStartTime;
     if (!hasStartTime) {
+      els.eventReminderUnavailable.textContent = timeMode === "allday"
+        ? "終日予定は通知対象外です"
+        : "時刻を設定すると通知できます";
       els.eventReminderCustom.hidden = true;
       els.eventReminderCustom.disabled = true;
       return;
@@ -1192,6 +1299,7 @@
       els.eventDate.value = existing.date;
       els.eventStart.value = existing.startTime || "";
       els.eventEnd.value = existing.endTime || "";
+      setEventTimeMode(existing.timeMode, { keepTimedValues: true });
       els.eventRecurrence.value = existing.recurrence ? existing.recurrence.freq : "none";
       setReminderControlValue(els.eventReminder, els.eventReminderCustom, existing.reminder);
       els.eventMemo.value = existing.memo || "";
@@ -1201,15 +1309,19 @@
         : "";
     } else {
       const preset = config.preset || {};
+      const presetTimeMode = timeModeFromPreset(preset);
       els.eventTitle.value = preset.title || config.title || "";
       els.eventDate.value = isValidDateString(preset.date) ? preset.date : (config.date || "");
       els.eventStart.value = isValidTimeString(preset.startTime) ? preset.startTime : "";
       els.eventEnd.value = isValidTimeString(preset.endTime) ? preset.endTime : "";
+      setEventTimeMode(presetTimeMode, { keepTimedValues: true });
       els.eventRecurrence.value = normalizePresetRecurrenceValue(preset.recurrence);
       setReminderControlValue(
         els.eventReminder,
         els.eventReminderCustom,
-        Object.prototype.hasOwnProperty.call(preset, "reminder") ? preset.reminder : state.settings.defaultReminder
+        Object.prototype.hasOwnProperty.call(preset, "reminder")
+          ? preset.reminder
+          : (presetTimeMode === "allday" ? null : state.settings.defaultReminder)
       );
       els.eventMemo.value = preset.memo || "";
       setSelectedColor(isKnownCategoryKey(preset.color) ? preset.color : firstCategoryKey());
@@ -1266,8 +1378,10 @@
   function readEventForm() {
     const title = els.eventTitle.value.trim();
     const date = els.eventDate.value;
-    const startTime = els.eventStart.value || null;
-    const endTime = els.eventEnd.value || null;
+    const timeMode = readEventTimeMode();
+    const timeRange = eventTimesForMode(timeMode, els.eventStart.value || null, els.eventEnd.value || null);
+    const startTime = timeRange.startTime;
+    const endTime = timeRange.endTime;
     const color = isKnownCategoryKey(els.eventColor.value) ? els.eventColor.value : firstCategoryKey();
     const memo = els.eventMemo.value.trim();
     const recurrenceValue = els.eventRecurrence.value;
@@ -1309,6 +1423,7 @@
     return {
       title,
       date,
+      timeMode,
       startTime,
       endTime,
       color,
@@ -1421,6 +1536,7 @@
           date: parsed.date,
           startTime: parsed.startTime,
           endTime: parsed.endTime,
+          timeSlot: parsed.timeSlot,
           recurrence: parsed.recurrence
         },
         hint: "内容を確認して保存してください。"
@@ -1435,6 +1551,7 @@
         date: "",
         startTime: null,
         endTime: null,
+        timeSlot: null,
         recurrence: null
       },
       hint: "日時を読み取れませんでした。必要な項目を入力してください。"
@@ -1818,16 +1935,19 @@
 
   function importCandidateToEvent(candidate) {
     const parsed = candidate.parsed;
-    const startTime = parsed.startTime || null;
+    const timeMode = timeModeFromPreset(parsed);
+    const timeRange = eventTimesForMode(timeMode, parsed.startTime || null, parsed.endTime || null);
+    const startTime = timeRange.startTime;
     return {
       id: createId("evt"),
       title: parsed.title.trim(),
       date: parsed.date,
+      timeMode,
       startTime,
-      endTime: validImportEndTime(startTime, parsed.endTime) ? parsed.endTime : null,
+      endTime: timeMode === "timed" && !validImportEndTime(startTime, timeRange.endTime) ? null : timeRange.endTime,
       color: firstCategoryKey(),
       memo: "",
-      reminder: startTime ? state.settings.defaultReminder : null,
+      reminder: timeMode !== "allday" && startTime ? state.settings.defaultReminder : null,
       recurrence: normalizeRecurrence(parsed.recurrence, parsed.date),
       exceptions: []
     };
@@ -1840,9 +1960,10 @@
   function formatImportCandidate(parsed) {
     const date = parseDate(parsed.date);
     const dateLabel = date ? `${date.getMonth() + 1}/${date.getDate()}(${WEEKDAYS[date.getDay()]})` : parsed.date;
-    const timeLabel = parsed.startTime
+    const timeSlotLabel = periodTimeModeLabel(normalizeTimeSlot(parsed.timeSlot));
+    const timeLabel = timeSlotLabel || (parsed.startTime
       ? (parsed.endTime ? `${parsed.startTime}-${parsed.endTime}` : parsed.startTime)
-      : "終日";
+      : "終日");
     const recurrence = parsed.recurrence ? ` / ${recurrenceLabel(parsed.recurrence.freq)}` : "";
     return `${dateLabel} ${timeLabel} ${parsed.title}${recurrence}`;
   }
@@ -1958,16 +2079,24 @@
   }
 
   function sortOccurrences(a, b) {
-    const aTime = a.startTime || "99:99";
-    const bTime = b.startTime || "99:99";
+    const aTime = occurrenceSortMinute(a);
+    const bTime = occurrenceSortMinute(b);
     if (aTime !== bTime) {
-      return aTime.localeCompare(bTime);
+      return aTime - bTime;
     }
     return a.title.localeCompare(b.title, "ja");
   }
 
+  function occurrenceSortMinute(occurrence) {
+    if (normalizeTimeMode(occurrence.timeMode) === "allday") {
+      return -1;
+    }
+    return isValidTimeString(occurrence.startTime) ? timeToMinutes(occurrence.startTime) : 9999;
+  }
+
   function eventChipText(occurrence) {
-    return occurrence.startTime ? `${occurrence.startTime} ${occurrence.title}` : occurrence.title;
+    const timeLabel = eventChipTimeLabel(occurrence);
+    return timeLabel ? `${timeLabel} ${occurrence.title}` : occurrence.title;
   }
 
   function createMonthEventChip(occurrence) {
@@ -1980,11 +2109,12 @@
     title.textContent = occurrence.title;
     chip.appendChild(title);
 
-    if (occurrence.startTime) {
+    const timeLabel = eventChipTimeLabel(occurrence);
+    if (timeLabel) {
       chip.classList.add("has-time");
       const time = document.createElement("span");
       time.className = "event-chip-time";
-      time.textContent = occurrence.startTime;
+      time.textContent = timeLabel;
       chip.appendChild(time);
     }
 
@@ -1999,10 +2129,22 @@
   }
 
   function eventTimeLabel(occurrence) {
+    const periodLabel = periodTimeModeLabel(occurrence.timeMode);
+    if (periodLabel) {
+      return periodLabel;
+    }
     if (!occurrence.startTime) {
       return "時刻なし";
     }
     return occurrence.endTime ? `${occurrence.startTime}-${occurrence.endTime}` : occurrence.startTime;
+  }
+
+  function eventChipTimeLabel(occurrence) {
+    const periodLabel = periodTimeModeLabel(occurrence.timeMode);
+    if (periodLabel) {
+      return periodLabel;
+    }
+    return occurrence.startTime || "";
   }
 
   function dayEventMeta(occurrence) {
@@ -2129,6 +2271,9 @@
       return false;
     }
     if (!isValidDateString(parsed.date)) {
+      return false;
+    }
+    if (parsed.timeSlot !== null && parsed.timeSlot !== undefined && !normalizeTimeSlot(parsed.timeSlot)) {
       return false;
     }
     if (parsed.startTime !== null && parsed.startTime !== undefined && !isValidTimeString(parsed.startTime)) {
@@ -2604,7 +2749,12 @@
         changed = true;
       }
       const event = normalizeEvent(item);
-      if (event && item && typeof item === "object" && item.reminder !== event.reminder) {
+      if (event && item && typeof item === "object" && (
+        item.timeMode !== event.timeMode ||
+        item.startTime !== event.startTime ||
+        item.endTime !== event.endTime ||
+        item.reminder !== event.reminder
+      )) {
         changed = true;
       }
       return event;
@@ -2631,22 +2781,32 @@
       return null;
     }
 
-    const startTime = isValidTimeString(item.startTime) ? item.startTime : null;
-    const endTime = isValidTimeString(item.endTime) ? item.endTime : null;
+    const timeMode = normalizeTimeMode(item.timeMode);
+    const rawStartTime = isValidTimeString(item.startTime) ? item.startTime : null;
+    const rawEndTime = isValidTimeString(item.endTime) ? item.endTime : null;
+    const timeRange = eventTimesForMode(timeMode, rawStartTime, rawEndTime);
+    const startTime = timeRange.startTime;
+    const endTime = startTime && timeRange.endTime && timeToMinutes(timeRange.endTime) > timeToMinutes(startTime)
+      ? timeRange.endTime
+      : null;
     const color = typeof item.color === "string" && item.color.trim() ? item.color.trim() : firstCategoryKey();
+    const reminder = startTime
+      ? normalizeReminderValue(
+        Object.prototype.hasOwnProperty.call(item, "reminder") ? item.reminder : undefined,
+        DEFAULT_REMINDER_MINUTES
+      )
+      : null;
 
     return {
       id: typeof item.id === "string" && item.id ? item.id : createId("evt"),
       title,
       date,
+      timeMode,
       startTime,
-      endTime: startTime && endTime && timeToMinutes(endTime) > timeToMinutes(startTime) ? endTime : null,
+      endTime,
       color,
       memo: typeof item.memo === "string" ? item.memo : "",
-      reminder: normalizeReminderValue(
-        Object.prototype.hasOwnProperty.call(item, "reminder") ? item.reminder : undefined,
-        DEFAULT_REMINDER_MINUTES
-      ),
+      reminder,
       recurrence: normalizeRecurrence(item.recurrence, date),
       exceptions: sanitizeExceptions(item.exceptions)
     };

@@ -227,10 +227,15 @@
   }
 
   function parseTimes(text, ranges) {
-    var times = findTimeExpressions(text);
+    var allTimes = findTimeExpressions(text);
+    var times = [];
     var i;
     var chosen = null;
     var rangeIndexes = {};
+
+    for (i = 0; i < allTimes.length; i += 1) {
+      if (!hasOverlap(ranges, allTimes[i].start, allTimes[i].end)) times.push(allTimes[i]);
+    }
 
     for (i = 0; i < times.length - 1; i += 1) {
       var between = text.slice(times[i].end, times[i + 1].start).replace(/\s+/g, "");
@@ -276,6 +281,64 @@
     }
 
     return chosen;
+  }
+
+  function timeSlotForWord(word) {
+    if (word === "終日" || word === "一日中" || word === "1日中" || word === "丸一日") return "allday";
+    if (word === "午前" || word === "午前中" || word === "朝から昼まで") return "am";
+    if (word === "午後" || word === "昼から") return "pm";
+    return null;
+  }
+
+  function timeSlotTimes(timeSlot) {
+    if (timeSlot === "am") {
+      return {
+        startTime: { hour: 9, minute: 0 },
+        endTime: { hour: 12, minute: 0 }
+      };
+    }
+    if (timeSlot === "pm") {
+      return {
+        startTime: { hour: 13, minute: 0 },
+        endTime: { hour: 17, minute: 0 }
+      };
+    }
+    return {
+      startTime: null,
+      endTime: null
+    };
+  }
+
+  function parseTimeSlot(text, ranges) {
+    var matches = [];
+    var regex = /終日|一日中|1日中|丸一日|午前中|朝から昼まで|午前(?!\s*\d)|午後(?!\s*\d)|昼から/g;
+    var match;
+    var i;
+
+    while ((match = regex.exec(text)) !== null) {
+      if (hasOverlap(ranges, match.index, match.index + match[0].length)) continue;
+      matches.push({
+        index: match.index,
+        end: match.index + match[0].length,
+        timeSlot: timeSlotForWord(match[0])
+      });
+    }
+
+    if (matches.length === 0) return null;
+
+    matches.sort(function (a, b) {
+      return a.index - b.index;
+    });
+
+    for (i = 0; i < matches.length; i += 1) {
+      addRange(ranges, matches[i].index, matches[i].end);
+    }
+
+    return {
+      timeSlot: matches[0].timeSlot,
+      startTime: timeSlotTimes(matches[0].timeSlot).startTime,
+      endTime: timeSlotTimes(matches[0].timeSlot).endTime
+    };
   }
 
   function parseRecurrence(text, ranges) {
@@ -554,12 +617,14 @@
     var normalized = normalizeText(text);
     var ranges = [];
     var recurrence = parseRecurrence(normalized, ranges);
+    var slot = parseTimeSlot(normalized, ranges);
     var date = parseDates(normalized, base, ranges);
     var time = parseTimes(normalized, ranges);
-    var foundAny = !!recurrence || !!date || !!time;
+    var foundAny = !!recurrence || !!date || !!time || !!slot;
     var finalDate;
-    var startTime = time ? time.startTime : null;
-    var endTime = time ? time.endTime : null;
+    var timeSlot = time ? null : slot ? slot.timeSlot : null;
+    var startTime = time ? time.startTime : slot ? slot.startTime : null;
+    var endTime = time ? time.endTime : slot ? slot.endTime : null;
 
     if (!foundAny) return null;
 
@@ -567,7 +632,7 @@
       finalDate = recurrenceDate(base, recurrence, startTime);
     } else if (date) {
       finalDate = date;
-    } else if (startTime) {
+    } else if (time && startTime) {
       finalDate = startOfLocalDay(base);
       if (isTimePastOnBase(base, startTime)) finalDate = addDays(finalDate, 1);
     } else {
@@ -579,6 +644,7 @@
       date: formatDate(finalDate),
       startTime: startTime ? formatTime(startTime.hour, startTime.minute) : null,
       endTime: endTime ? formatTime(endTime.hour, endTime.minute) : null,
+      timeSlot: timeSlot,
       recurrence: recurrence
     };
   }
@@ -586,11 +652,13 @@
   function sameResult(actual, expected) {
     if (actual === null || expected === null) return actual === expected;
     if (!actual || !expected) return false;
+    var expectedTimeSlot = Object.prototype.hasOwnProperty.call(expected, "timeSlot") ? expected.timeSlot : null;
     if (
       actual.title !== expected.title ||
       actual.date !== expected.date ||
       actual.startTime !== expected.startTime ||
-      actual.endTime !== expected.endTime
+      actual.endTime !== expected.endTime ||
+      actual.timeSlot !== expectedTimeSlot
     ) {
       return false;
     }
@@ -718,6 +786,50 @@
       {
         text: "9時に電話",
         expected: { title: "電話", date: "2026-08-23", startTime: "09:00", endTime: null, recurrence: null }
+      },
+      {
+        text: "明日終日 出張",
+        expected: { title: "出張", date: "2026-08-23", startTime: null, endTime: null, timeSlot: "allday", recurrence: null }
+      },
+      {
+        text: "来週月曜午前中 工事",
+        expected: { title: "工事", date: "2026-08-24", startTime: "09:00", endTime: "12:00", timeSlot: "am", recurrence: null }
+      },
+      {
+        text: "9/1 午後 面談",
+        expected: { title: "面談", date: "2026-09-01", startTime: "13:00", endTime: "17:00", timeSlot: "pm", recurrence: null }
+      },
+      {
+        text: "午後3時 電話",
+        expected: { title: "電話", date: "2026-08-22", startTime: "15:00", endTime: null, timeSlot: null, recurrence: null }
+      },
+      {
+        text: "午前9時半 受診",
+        expected: { title: "受診", date: "2026-08-23", startTime: "09:30", endTime: null, timeSlot: null, recurrence: null }
+      },
+      {
+        text: "毎週土曜 午前中 掃除",
+        expected: { title: "掃除", date: "2026-08-29", startTime: "09:00", endTime: "12:00", timeSlot: "am", recurrence: { freq: "weekly", weekday: 6 } }
+      },
+      {
+        text: "終日 大掃除",
+        expected: { title: "大掃除", date: "2026-08-22", startTime: null, endTime: null, timeSlot: "allday", recurrence: null }
+      },
+      {
+        text: "1日中 資料整理",
+        expected: { title: "資料整理", date: "2026-08-22", startTime: null, endTime: null, timeSlot: "allday", recurrence: null }
+      },
+      {
+        text: "朝から昼まで 勉強",
+        expected: { title: "勉強", date: "2026-08-22", startTime: "09:00", endTime: "12:00", timeSlot: "am", recurrence: null }
+      },
+      {
+        text: "昼から 買い出し",
+        expected: { title: "買い出し", date: "2026-08-22", startTime: "13:00", endTime: "17:00", timeSlot: "pm", recurrence: null }
+      },
+      {
+        text: "明日午前中 10時から会議",
+        expected: { title: "会議", date: "2026-08-23", startTime: "10:00", endTime: null, timeSlot: null, recurrence: null }
       }
     ];
     var pass = 0;

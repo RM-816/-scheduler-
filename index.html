@@ -201,7 +201,16 @@
           <span>日付</span>
           <input id="eventDate" type="date" required>
         </label>
-        <div class="field-pair">
+        <fieldset class="time-mode-field">
+          <legend>時間帯</legend>
+          <div id="eventTimeModeGroup" class="time-mode-options" role="group" aria-label="時間帯">
+            <button class="time-mode-button is-selected" type="button" data-time-mode="timed" aria-pressed="true">時刻指定</button>
+            <button class="time-mode-button" type="button" data-time-mode="allday" aria-pressed="false">終日</button>
+            <button class="time-mode-button" type="button" data-time-mode="am" aria-pressed="false">午前中</button>
+            <button class="time-mode-button" type="button" data-time-mode="pm" aria-pressed="false">午後</button>
+          </div>
+        </fieldset>
+        <div id="eventTimeFields" class="field-pair">
           <label>
             <span>開始</span>
             <input id="eventStart" type="time">
