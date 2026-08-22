@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Scheduler app icon">
+  <defs>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="145%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="12" stdDeviation="18" flood-color="#CBD5E1" flood-opacity="0.8"/>
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="#F8FAFC"/>
+
+  <g filter="url(#softShadow)">
+    <rect x="88" y="92" width="336" height="328" rx="46" fill="#FFFFFF"/>
+    <path d="M134 92h244c25.4 0 46 20.6 46 46v62H88v-62c0-25.4 20.6-46 46-46Z" fill="#3B82F6"/>
+    <path d="M88 190h336v42H88z" fill="#EFF6FF"/>
+
+    <rect x="154" y="54" width="34" height="86" rx="17" fill="#E5E7EB"/>
+    <rect x="324" y="54" width="34" height="86" rx="17" fill="#E5E7EB"/>
+    <rect x="164" y="73" width="14" height="48" rx="7" fill="#FFFFFF"/>
+    <rect x="334" y="73" width="14" height="48" rx="7" fill="#FFFFFF"/>
+
+    <g fill="#E5E7EB">
+      <rect x="130" y="260" width="52" height="52" rx="14"/>
+      <rect x="210" y="260" width="52" height="52" rx="14"/>
+      <rect x="290" y="260" width="52" height="52" rx="14"/>
+      <rect x="130" y="340" width="52" height="52" rx="14"/>
+      <rect x="210" y="340" width="52" height="52" rx="14"/>
+    </g>
+
+    <rect x="290" y="340" width="52" height="52" rx="14" fill="#3B82F6"/>
+    <path d="m303 366 11 11 23-26" fill="none" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

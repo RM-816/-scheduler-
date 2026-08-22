@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Scheduler favicon">
+  <rect width="512" height="512" rx="108" fill="#F8FAFC"/>
+  <rect x="96" y="104" width="320" height="312" rx="44" fill="#FFFFFF"/>
+  <path d="M140 104h232c24.3 0 44 19.7 44 44v70H96v-70c0-24.3 19.7-44 44-44Z" fill="#3B82F6"/>
+  <rect x="154" y="68" width="38" height="84" rx="19" fill="#E5E7EB"/>
+  <rect x="320" y="68" width="38" height="84" rx="19" fill="#E5E7EB"/>
+  <g fill="#E5E7EB">
+    <rect x="144" y="268" width="64" height="64" rx="16"/>
+    <rect x="224" y="268" width="64" height="64" rx="16"/>
+    <rect x="144" y="348" width="64" height="64" rx="16"/>
+  </g>
+  <rect x="304" y="304" width="80" height="80" rx="20" fill="#3B82F6"/>
+  <path d="m323 345 16 16 31-36" fill="none" stroke="#FFFFFF" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

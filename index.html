@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#3B82F6">
+  <title>scheduler</title>
+  <script>
+    (() => {
+      if (location.protocol !== "http:" && location.protocol !== "https:") {
+        return;
+      }
+
+      const manifestLink = document.createElement("link");
+      manifestLink.rel = "manifest";
+      manifestLink.href = "manifest.json";
+      document.head.appendChild(manifestLink);
+    })();
+  </script>
+  <link id="appFavicon" rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="holidays.js"></script>
+  <script defer src="nlp.js"></script>
+  <script defer src="ocr.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body data-view="month">
+  <div class="app-shell">
+    <header class="app-header">
+      <div class="header-content">
+        <div class="brand">
+          <img id="appIcon" class="app-icon" src="assets/icon.svg" alt="" hidden>
+          <span id="iconFallback" class="app-icon-fallback" aria-hidden="true">予</span>
+          <div>
+            <h1>scheduler</h1>
+            <p id="dateSubtitle"></p>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <div id="notificationBannerArea" class="notification-banner-area" aria-live="assertive" aria-atomic="false"></div>
+    <div id="toastArea" class="toast-area" aria-live="polite" aria-atomic="true"></div>
+
+    <main class="app-main">
+      <section id="monthView" class="view is-active" aria-labelledby="monthHeading">
+        <div class="view-toolbar">
+          <button id="prevMonth" class="icon-button" type="button" aria-label="前月">‹</button>
+          <h2 id="monthHeading" class="view-title"></h2>
+          <button id="nextMonth" class="icon-button" type="button" aria-label="翌月">›</button>
+        </div>
+        <button id="todayMonth" class="secondary-button" type="button">今日</button>
+        <div class="weekday-row" aria-hidden="true">
+          <span>日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span>土</span>
+        </div>
+        <div id="monthGrid" class="month-grid"></div>
+      </section>
+
+      <section id="weekView" class="view" aria-labelledby="weekHeading" hidden>
+        <div class="view-toolbar">
+          <button id="prevWeek" class="icon-button" type="button" aria-label="前週">‹</button>
+          <h2 id="weekHeading" class="view-title"></h2>
+          <button id="nextWeek" class="icon-button" type="button" aria-label="翌週">›</button>
+        </div>
+        <div class="week-card">
+          <div id="weekAllDay" class="week-all-day"></div>
+          <div id="weekTimeline" class="week-timeline"></div>
+        </div>
+      </section>
+
+      <section id="todoView" class="view" aria-labelledby="todoHeading" hidden>
+        <h2 id="todoHeading" class="view-title standalone-title">ToDo</h2>
+        <form id="todoForm" class="todo-form">
+          <input id="todoInput" type="text" autocomplete="off" maxlength="80" placeholder="タスクを追加">
+          <button class="primary-button" type="submit">追加</button>
+        </form>
+        <p id="todoCountText" class="muted-text"></p>
+        <div id="todoList" class="todo-list"></div>
+      </section>
+
+      <section id="settingsView" class="view" aria-labelledby="settingsHeading" hidden>
+        <h2 id="settingsHeading" class="view-title standalone-title">設定</h2>
+        <div class="settings-list">
+          <label class="setting-row">
+            <span>
+              <strong>通知</strong>
+              <small>予定ごとのリマインドで知らせます</small>
+            </span>
+            <input id="notificationToggle" class="switch-input" type="checkbox">
+          </label>
+          <label class="setting-row setting-control-row">
+            <span>
+              <strong>既定のリマインド</strong>
+              <small>新しく作る予定に使います</small>
+            </span>
+            <span class="reminder-control reminder-control-settings">
+              <select id="defaultReminderSelect">
+                <option value="none">なし</option>
+                <option value="0">定刻(0分前)</option>
+                <option value="5">5分前</option>
+                <option value="10">10分前</option>
+                <option value="15">15分前</option>
+                <option value="30">30分前</option>
+                <option value="60">1時間前</option>
+                <option value="120">2時間前</option>
+                <option value="1440">1日前</option>
+                <option value="custom">カスタム…</option>
+              </select>
+              <input id="defaultReminderCustom" class="reminder-custom-input" type="number" min="1" max="10080" step="1" inputmode="numeric" placeholder="分" hidden>
+            </span>
+          </label>
+          <section class="category-settings" aria-labelledby="categorySettingsTitle">
+            <div class="category-settings-header">
+              <h3 id="categorySettingsTitle">カテゴリ</h3>
+              <button id="addCategoryButton" class="secondary-button category-add-button" type="button">＋カテゴリを追加</button>
+            </div>
+            <div id="categorySettingsList" class="category-settings-list"></div>
+          </section>
+          <button id="clearDataButton" class="danger-outline-button" type="button">データを全削除</button>
+          <div class="info-box">
+            <strong>アプリ情報</strong>
+            <p>完全オフライン対応の静的スケジュール管理アプリです。予定・ToDo・設定はこのブラウザの localStorage に保存されます。</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <form id="chatBar" class="chat-bar" autocomplete="off">
+      <button id="importButton" class="voice-button import-open-button" type="button" aria-label="写真・テキストから取込">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 4h-5L8 6H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3l-1.5-2Z"/><circle cx="12" cy="13" r="3.5"/></svg>
+      </button>
+      <button id="voiceButton" class="voice-button" type="button" aria-label="音声入力" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v5a3 3 0 1 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v3"/><path d="M8 21h8"/></svg>
+      </button>
+      <input id="chatInput" type="text" maxlength="120" placeholder="例: 来週月曜13時 会議">
+      <button class="primary-button" type="submit">送信</button>
+    </form>
+
+    <button id="addEventFab" class="add-fab" type="button" aria-label="予定を追加">+</button>
+
+    <nav class="tabbar" aria-label="メインナビゲーション">
+      <button class="tab-button is-active" type="button" data-view="month" aria-current="page">
+        <span class="tab-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M7 3v3M17 3v3M4 8h16M6 5h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"/></svg>
+        </span>
+        <span>月</span>
+      </button>
+      <button class="tab-button" type="button" data-view="week">
+        <span class="tab-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16M8 4v16M16 4v16"/></svg>
+        </span>
+        <span>週</span>
+      </button>
+      <button class="tab-button" type="button" data-view="todo">
+        <span class="tab-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h14M5 17h9M3 7h.01M3 12h.01M3 17h.01"/></svg>
+        </span>
+        <span>ToDo</span>
+        <span id="todoBadge" class="tab-badge" hidden>0</span>
+      </button>
+      <button class="tab-button" type="button" data-view="settings">
+        <span class="tab-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM19.4 15a1.7 1.7 0 0 0 .34 1.87l.05.05a2 2 0 1 1-2.83 2.83l-.05-.05a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.04 1.56V21a2 2 0 1 1-4 0v-.08a1.7 1.7 0 0 0-1.04-1.56 1.7 1.7 0 0 0-1.87.34l-.05.05a2 2 0 1 1-2.83-2.83l.05-.05A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.04H3a2 2 0 1 1 0-4h.08A1.7 1.7 0 0 0 4.64 8.9a1.7 1.7 0 0 0-.34-1.87l-.05-.05a2 2 0 1 1 2.83-2.83l.05.05A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1.04-1.56V3a2 2 0 1 1 4 0v.08A1.7 1.7 0 0 0 15.1 4.64a1.7 1.7 0 0 0 1.87-.34l.05-.05a2 2 0 1 1 2.83 2.83l-.05.05A1.7 1.7 0 0 0 19.4 9c.2.55.72.96 1.56.96H21a2 2 0 1 1 0 4h-.08A1.7 1.7 0 0 0 19.4 15Z"/></svg>
+        </span>
+        <span>設定</span>
+      </button>
+    </nav>
+  </div>
+
+  <div id="dayPanelBackdrop" class="panel-backdrop" hidden>
+    <aside class="day-panel" aria-labelledby="selectedDayTitle">
+      <div class="sheet-header">
+        <div>
+          <h2 id="selectedDayTitle"></h2>
+          <p id="selectedDayHoliday" class="muted-text"></p>
+        </div>
+        <button id="closeDayPanel" class="icon-button" type="button" aria-label="閉じる">×</button>
+      </div>
+      <div id="selectedDayEvents" class="day-events"></div>
+      <button id="addForDayButton" class="primary-button full-button" type="button">この日に追加</button>
+    </aside>
+  </div>
+
+  <div id="eventModal" class="modal-backdrop" hidden>
+    <section class="modal-card" aria-labelledby="eventModalTitle">
+      <div class="sheet-header">
+        <div>
+          <h2 id="eventModalTitle"></h2>
+          <p id="eventModalHint" class="muted-text"></p>
+        </div>
+        <button id="closeEventModal" class="icon-button" type="button" aria-label="閉じる">×</button>
+      </div>
+      <form id="eventForm" class="event-form">
+        <label>
+          <span>タイトル</span>
+          <input id="eventTitle" type="text" required maxlength="80">
+        </label>
+        <label>
+          <span>日付</span>
+          <input id="eventDate" type="date" required>
+        </label>
+        <div class="field-pair">
+          <label>
+            <span>開始</span>
+            <input id="eventStart" type="time">
+          </label>
+          <label>
+            <span>終了</span>
+            <input id="eventEnd" type="time">
+          </label>
+        </div>
+        <fieldset class="color-field">
+          <legend>カテゴリ</legend>
+          <input id="eventColor" type="hidden" value="work">
+          <div id="colorOptions" class="color-options"></div>
+        </fieldset>
+        <label>
+          <span>繰り返し</span>
+          <select id="eventRecurrence">
+            <option value="none">なし</option>
+            <option value="daily">毎日</option>
+            <option value="weekly">毎週</option>
+            <option value="monthly">毎月</option>
+          </select>
+        </label>
+        <label>
+          <span>リマインド</span>
+          <span class="reminder-control">
+            <select id="eventReminder">
+              <option value="none">なし</option>
+              <option value="0">定刻(0分前)</option>
+              <option value="5">5分前</option>
+              <option value="10">10分前</option>
+              <option value="15">15分前</option>
+              <option value="30">30分前</option>
+              <option value="60">1時間前</option>
+              <option value="120">2時間前</option>
+              <option value="1440">1日前</option>
+              <option value="custom">カスタム…</option>
+            </select>
+            <input id="eventReminderCustom" class="reminder-custom-input" type="number" min="1" max="10080" step="1" inputmode="numeric" placeholder="分" hidden>
+          </span>
+          <small id="eventReminderUnavailable" class="field-note" hidden>時刻を設定すると通知できます</small>
+        </label>
+        <label>
+          <span>メモ</span>
+          <textarea id="eventMemo" rows="3" maxlength="300"></textarea>
+        </label>
+        <p id="formError" class="form-error" role="alert"></p>
+        <div class="modal-actions">
+          <button id="deleteEventButton" class="danger-outline-button" type="button" hidden>削除</button>
+          <span class="action-spacer"></span>
+          <button id="cancelEventButton" class="secondary-button" type="button">キャンセル</button>
+          <button class="primary-button" type="submit">保存</button>
+        </div>
+      </form>
+    </section>
+  </div>
+
+  <div id="choiceModal" class="modal-backdrop" hidden>
+    <section class="choice-card" aria-labelledby="choiceTitle">
+      <h2 id="choiceTitle"></h2>
+      <p id="choiceMessage" class="muted-text"></p>
+      <div id="choiceActions" class="choice-actions"></div>
+    </section>
+  </div>
+
+  <div id="importModal" class="modal-backdrop" hidden>
+    <section class="modal-card import-modal" aria-labelledby="importModalTitle">
+      <div class="sheet-header">
+        <div>
+          <h2 id="importModalTitle">取込</h2>
+          <p id="importModalHint" class="muted-text">写真OCRまたは貼り付けから予定を一括登録します。</p>
+        </div>
+        <button id="closeImportModal" class="icon-button" type="button" aria-label="閉じる">×</button>
+      </div>
+
+      <div class="import-body">
+        <section id="ocrPhotoArea" class="import-section">
+          <div id="ocrUnavailableNotice" class="ocr-unavailable" hidden>
+            写真読み取りを使うには「スケジューラーを起動.bat」をダブルクリックして起動してください
+          </div>
+          <div id="ocrControls" class="ocr-controls">
+            <button id="chooseImageButton" class="secondary-button" type="button">写真を選ぶ</button>
+            <input id="importImageInput" class="visually-hidden" type="file" accept="image/*">
+            <img id="ocrThumbnail" class="ocr-thumbnail" alt="選択した写真" hidden>
+            <div id="ocrProgress" class="ocr-progress" hidden>
+              <div class="ocr-progress-label">
+                <span id="ocrProgressPhase">OCR準備</span>
+                <span id="ocrProgressPercent">0%</span>
+              </div>
+              <div class="progress-track" aria-hidden="true">
+                <div id="ocrProgressBar" class="progress-bar"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <label class="import-text-label">
+          <span>テキスト</span>
+          <textarea id="importText" rows="7" placeholder="例: 9月1日(火) 10:00 始業式（1行に1件）"></textarea>
+        </label>
+
+        <div class="import-actions">
+          <button id="parseImportButton" class="primary-button" type="button">解析</button>
+          <button id="registerImportButton" class="secondary-button" type="button" disabled>選択した0件を登録</button>
+        </div>
+
+        <div id="importCandidateSummary" class="muted-text" aria-live="polite"></div>
+        <div id="importCandidateList" class="import-candidate-list"></div>
+      </div>
+    </section>
+  </div>
+  <script>
+    (() => {
+      const isSupportedProtocol =
+        location.protocol === "https:" ||
+        location.hostname === "localhost" ||
+        location.hostname === "127.0.0.1";
+
+      if (!isSupportedProtocol || !("serviceWorker" in navigator)) {
+        return;
+      }
+
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("sw.js").catch((error) => {
+          console.warn("Service Worker registration failed:", error);
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

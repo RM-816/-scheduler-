@@ -1,0 +1,2917 @@
+(function () {
+  "use strict";
+
+  const STORAGE_KEYS = {
+    events: "scheduler.events",
+    todos: "scheduler.todos",
+    settings: "scheduler.settings"
+  };
+
+  const DEFAULT_CATEGORIES = [
+    { key: "work", label: "仕事", color: "#3B82F6" },
+    { key: "study", label: "勉強", color: "#8B5CF6" },
+    { key: "private", label: "プライベート", color: "#22C55E" },
+    { key: "exercise", label: "運動", color: "#F97316" }
+  ];
+  const LEGACY_OPTIONAL_CATEGORIES = {
+    important: { key: "important", label: "大事", color: "#EF4444" },
+    other: { key: "other", label: "その他", color: "#6B7280" }
+  };
+  const CATEGORY_PALETTE = ["#3B82F6", "#8B5CF6", "#22C55E", "#F97316", "#EF4444", "#EC4899", "#14B8A6", "#6B7280"];
+  const CATEGORY_MAX_COUNT = 8;
+  const CATEGORY_LABEL_MAX_LENGTH = 10;
+  const CATEGORY_MIGRATION_FLAG = "categoriesMigrated";
+  const CATEGORY_KEY_PATTERN = /^[A-Za-z0-9_-]{1,40}$/;
+  const VALID_RECURRENCES = new Set(["daily", "weekly", "monthly"]);
+  const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
+  const HOUR_START = 7;
+  const HOUR_END = 24;
+  const HOUR_HEIGHT = 48;
+  const NOTIFICATION_CATCH_UP_LIMIT_MINUTES = 30;
+  const DEFAULT_REMINDER_MINUTES = 10;
+  const REMINDER_CUSTOM_MAX_MINUTES = 10080;
+  const REMINDER_PRESET_VALUES = [0, 5, 10, 15, 30, 60, 120, 1440];
+
+  const state = {
+    view: "month",
+    currentMonth: startOfMonth(new Date()),
+    currentWeekStart: startOfWeek(new Date()),
+    selectedDate: formatDate(new Date()),
+    editing: null,
+    events: [],
+    todos: [],
+    settings: defaultSettings(),
+    categoryPaletteFor: null,
+    notificationTimer: null,
+    lastNotificationCheckAt: null,
+    importCandidates: [],
+    importImageUrl: null,
+    voiceRecognition: null,
+    voiceListening: false,
+    voiceStopping: false,
+    voiceBaseText: "",
+    voiceFinalText: ""
+  };
+
+  const els = {};
+  const MONTH_RESIZE_DEBOUNCE_MS = 120;
+  const MONTH_FIT_EPSILON = 0.5;
+  let monthResizeTimer = null;
+
+  document.addEventListener("DOMContentLoaded", init);
+
+  function init() {
+    cacheElements();
+    state.settings = loadSettings();
+    state.events = loadEvents();
+    state.todos = loadTodos();
+    migrateCategoriesIfNeeded();
+    setupOptionalIcon();
+    bindEvents();
+    renderAll();
+    startNotificationTimer();
+  }
+
+  function cacheElements() {
+    els.dateSubtitle = byId("dateSubtitle");
+    els.notificationBannerArea = byId("notificationBannerArea");
+    els.toastArea = byId("toastArea");
+    els.appIcon = byId("appIcon");
+    els.iconFallback = byId("iconFallback");
+    els.favicon = byId("appFavicon");
+
+    els.monthView = byId("monthView");
+    els.weekView = byId("weekView");
+    els.todoView = byId("todoView");
+    els.settingsView = byId("settingsView");
+    els.tabButtons = Array.from(document.querySelectorAll(".tab-button"));
+
+    els.prevMonth = byId("prevMonth");
+    els.nextMonth = byId("nextMonth");
+    els.todayMonth = byId("todayMonth");
+    els.monthHeading = byId("monthHeading");
+    els.monthGrid = byId("monthGrid");
+
+    els.prevWeek = byId("prevWeek");
+    els.nextWeek = byId("nextWeek");
+    els.weekHeading = byId("weekHeading");
+    els.weekAllDay = byId("weekAllDay");
+    els.weekTimeline = byId("weekTimeline");
+
+    els.todoForm = byId("todoForm");
+    els.todoInput = byId("todoInput");
+    els.todoCountText = byId("todoCountText");
+    els.todoList = byId("todoList");
+    els.todoBadge = byId("todoBadge");
+
+    els.notificationToggle = byId("notificationToggle");
+    els.defaultReminderSelect = byId("defaultReminderSelect");
+    els.defaultReminderCustom = byId("defaultReminderCustom");
+    els.categorySettingsList = byId("categorySettingsList");
+    els.addCategoryButton = byId("addCategoryButton");
+    els.clearDataButton = byId("clearDataButton");
+
+    els.importButton = byId("importButton");
+    els.chatBar = byId("chatBar");
+    els.voiceButton = byId("voiceButton");
+    els.chatInput = byId("chatInput");
+    els.addEventFab = byId("addEventFab");
+
+    els.dayPanelBackdrop = byId("dayPanelBackdrop");
+    els.selectedDayTitle = byId("selectedDayTitle");
+    els.selectedDayHoliday = byId("selectedDayHoliday");
+    els.selectedDayEvents = byId("selectedDayEvents");
+    els.closeDayPanel = byId("closeDayPanel");
+    els.addForDayButton = byId("addForDayButton");
+
+    els.eventModal = byId("eventModal");
+    els.eventModalTitle = byId("eventModalTitle");
+    els.eventModalHint = byId("eventModalHint");
+    els.closeEventModal = byId("closeEventModal");
+    els.eventForm = byId("eventForm");
+    els.eventTitle = byId("eventTitle");
+    els.eventDate = byId("eventDate");
+    els.eventStart = byId("eventStart");
+    els.eventEnd = byId("eventEnd");
+    els.eventColor = byId("eventColor");
+    els.eventRecurrence = byId("eventRecurrence");
+    els.eventReminder = byId("eventReminder");
+    els.eventReminderCustom = byId("eventReminderCustom");
+    els.eventReminderUnavailable = byId("eventReminderUnavailable");
+    els.eventMemo = byId("eventMemo");
+    els.formError = byId("formError");
+    els.deleteEventButton = byId("deleteEventButton");
+    els.cancelEventButton = byId("cancelEventButton");
+    els.colorOptions = byId("colorOptions");
+
+    els.choiceModal = byId("choiceModal");
+    els.choiceTitle = byId("choiceTitle");
+    els.choiceMessage = byId("choiceMessage");
+    els.choiceActions = byId("choiceActions");
+
+    els.importModal = byId("importModal");
+    els.closeImportModal = byId("closeImportModal");
+    els.importText = byId("importText");
+    els.ocrPhotoArea = byId("ocrPhotoArea");
+    els.ocrUnavailableNotice = byId("ocrUnavailableNotice");
+    els.ocrControls = byId("ocrControls");
+    els.chooseImageButton = byId("chooseImageButton");
+    els.importImageInput = byId("importImageInput");
+    els.ocrThumbnail = byId("ocrThumbnail");
+    els.ocrProgress = byId("ocrProgress");
+    els.ocrProgressPhase = byId("ocrProgressPhase");
+    els.ocrProgressPercent = byId("ocrProgressPercent");
+    els.ocrProgressBar = byId("ocrProgressBar");
+    els.parseImportButton = byId("parseImportButton");
+    els.registerImportButton = byId("registerImportButton");
+    els.importCandidateSummary = byId("importCandidateSummary");
+    els.importCandidateList = byId("importCandidateList");
+  }
+
+  function bindEvents() {
+    els.tabButtons.forEach((button) => {
+      button.addEventListener("click", () => switchView(button.dataset.view));
+    });
+
+    els.prevMonth.addEventListener("click", () => {
+      state.currentMonth = addMonths(state.currentMonth, -1);
+      renderMonth();
+    });
+
+    els.nextMonth.addEventListener("click", () => {
+      state.currentMonth = addMonths(state.currentMonth, 1);
+      renderMonth();
+    });
+
+    els.todayMonth.addEventListener("click", () => {
+      const today = new Date();
+      state.currentMonth = startOfMonth(today);
+      state.selectedDate = formatDate(today);
+      renderMonth();
+    });
+
+    els.prevWeek.addEventListener("click", () => {
+      state.currentWeekStart = addDays(state.currentWeekStart, -7);
+      renderWeek();
+    });
+
+    els.nextWeek.addEventListener("click", () => {
+      state.currentWeekStart = addDays(state.currentWeekStart, 7);
+      renderWeek();
+    });
+
+    els.addEventFab.addEventListener("click", () => {
+      openEventForm({ date: defaultDateForAdd() });
+    });
+
+    els.importButton.addEventListener("click", openImportModal);
+    els.chatBar.addEventListener("submit", handleChatSubmit);
+    setupVoiceInput();
+
+    els.closeDayPanel.addEventListener("click", closeDayPanel);
+    els.dayPanelBackdrop.addEventListener("click", (event) => {
+      if (event.target === els.dayPanelBackdrop) {
+        closeDayPanel();
+      }
+    });
+    els.addForDayButton.addEventListener("click", () => {
+      openEventForm({ date: state.selectedDate });
+    });
+
+    els.closeEventModal.addEventListener("click", closeEventModal);
+    els.cancelEventButton.addEventListener("click", closeEventModal);
+    els.eventModal.addEventListener("click", (event) => {
+      if (event.target === els.eventModal) {
+        closeEventModal();
+      }
+    });
+    els.eventForm.addEventListener("submit", handleEventSubmit);
+    els.deleteEventButton.addEventListener("click", handleDeleteEvent);
+    els.colorOptions.addEventListener("click", handleEventCategoryClick);
+    els.eventStart.addEventListener("input", updateEventReminderAvailability);
+    els.eventStart.addEventListener("change", updateEventReminderAvailability);
+    els.eventReminder.addEventListener("change", handleEventReminderChange);
+
+    els.todoForm.addEventListener("submit", handleTodoSubmit);
+    els.notificationToggle.addEventListener("change", handleNotificationToggle);
+    els.defaultReminderSelect.addEventListener("change", handleDefaultReminderChange);
+    els.defaultReminderCustom.addEventListener("input", handleDefaultReminderCustomInput);
+    els.defaultReminderCustom.addEventListener("change", handleDefaultReminderCustomInput);
+    els.categorySettingsList.addEventListener("click", handleCategorySettingsClick);
+    els.categorySettingsList.addEventListener("input", handleCategoryNameInput);
+    els.categorySettingsList.addEventListener("focusin", handleCategoryNameFocus);
+    els.categorySettingsList.addEventListener("focusout", handleCategoryNameBlur);
+    els.addCategoryButton.addEventListener("click", handleAddCategory);
+    els.clearDataButton.addEventListener("click", handleClearData);
+
+    els.choiceModal.addEventListener("click", (event) => {
+      if (event.target === els.choiceModal) {
+        closeChoiceModal();
+      }
+    });
+
+    els.closeImportModal.addEventListener("click", closeImportModal);
+    els.importModal.addEventListener("click", (event) => {
+      if (event.target === els.importModal) {
+        closeImportModal();
+      }
+    });
+    els.chooseImageButton.addEventListener("click", () => {
+      els.importImageInput.click();
+    });
+    els.importImageInput.addEventListener("change", handleImportImageSelect);
+    els.parseImportButton.addEventListener("click", handleParseImport);
+    els.registerImportButton.addEventListener("click", handleRegisterImport);
+    els.importCandidateList.addEventListener("change", handleImportCandidateToggle);
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      if (!els.choiceModal.hidden) {
+        closeChoiceModal();
+      } else if (!els.importModal.hidden) {
+        closeImportModal();
+      } else if (!els.eventModal.hidden) {
+        closeEventModal();
+      } else if (!els.dayPanelBackdrop.hidden) {
+        closeDayPanel();
+      }
+    });
+
+    document.addEventListener("click", handleDocumentClick);
+    window.addEventListener("resize", scheduleMonthResizeRender);
+    window.addEventListener("orientationchange", scheduleMonthResizeRender);
+  }
+
+  function renderAll() {
+    renderHeader();
+    renderTabs();
+    renderMonth();
+    renderWeek();
+    renderTodos();
+    renderEventColorOptions();
+    renderSettings();
+  }
+
+  function renderHeader() {
+    els.dateSubtitle.textContent = formatLongDate(formatDate(new Date()));
+  }
+
+  function renderTabs() {
+    document.body.dataset.view = state.view;
+    const viewMap = {
+      month: els.monthView,
+      week: els.weekView,
+      todo: els.todoView,
+      settings: els.settingsView
+    };
+
+    Object.keys(viewMap).forEach((view) => {
+      const isActive = view === state.view;
+      viewMap[view].hidden = !isActive;
+      viewMap[view].classList.toggle("is-active", isActive);
+    });
+
+    els.tabButtons.forEach((button) => {
+      const isActive = button.dataset.view === state.view;
+      button.classList.toggle("is-active", isActive);
+      if (isActive) {
+        button.setAttribute("aria-current", "page");
+      } else {
+        button.removeAttribute("aria-current");
+      }
+    });
+  }
+
+  function switchView(view) {
+    if (!["month", "week", "todo", "settings"].includes(view)) {
+      return;
+    }
+    state.view = view;
+    renderAll();
+  }
+
+  function renderMonth() {
+    const year = state.currentMonth.getFullYear();
+    const month = state.currentMonth.getMonth();
+    els.monthHeading.textContent = `${year}年${month + 1}月`;
+
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const gridStart = startOfWeek(firstDay);
+    const gridEnd = addDays(lastDay, 6 - lastDay.getDay());
+    const cellCount = Math.max(35, Math.round((gridEnd.getTime() - gridStart.getTime()) / 86400000) + 1);
+    const weekCount = cellCount / 7;
+    const todayStr = formatDate(new Date());
+    const nodes = [];
+
+    els.monthGrid.style.setProperty("--month-week-count", String(weekCount));
+
+    for (let index = 0; index < cellCount; index += 1) {
+      const date = addDays(gridStart, index);
+      const dateStr = formatDate(date);
+      const holidayName = getHolidayName(dateStr);
+      const weekday = date.getDay();
+      const cell = document.createElement("button");
+      cell.type = "button";
+      cell.className = "day-cell";
+      cell.setAttribute("aria-label", formatLongDate(dateStr));
+
+      if (date.getMonth() !== month) {
+        cell.classList.add("is-outside");
+      }
+      if (dateStr === todayStr) {
+        cell.classList.add("is-today");
+      }
+      if (dateStr === state.selectedDate) {
+        cell.classList.add("is-selected");
+      }
+      if (weekday === 0) {
+        cell.classList.add("is-sunday");
+      }
+      if (weekday === 6) {
+        cell.classList.add("is-saturday");
+      }
+      if (holidayName) {
+        cell.classList.add("is-holiday");
+      }
+
+      const top = document.createElement("div");
+      top.className = "day-top";
+      const number = document.createElement("span");
+      number.className = "day-number";
+      number.textContent = String(date.getDate());
+      top.appendChild(number);
+
+      if (holidayName) {
+        const holiday = document.createElement("span");
+        holiday.className = "holiday-name";
+        holiday.textContent = holidayName;
+        top.appendChild(holiday);
+      }
+
+      const stack = document.createElement("div");
+      stack.className = "event-stack";
+      const occurrences = getOccurrencesForDate(dateStr).sort(sortOccurrences);
+      occurrences.forEach((occurrence) => {
+        stack.appendChild(createMonthEventChip(occurrence));
+      });
+      if (occurrences.length > 0) {
+        stack.appendChild(createMonthMoreChip(occurrences.length));
+      }
+
+      cell.append(top, stack);
+      cell.addEventListener("click", () => openDayPanel(dateStr));
+      nodes.push(cell);
+    }
+
+    els.monthGrid.replaceChildren(...nodes);
+    trimMonthEventStacks();
+  }
+
+  function scheduleMonthResizeRender() {
+    if (monthResizeTimer !== null) {
+      window.clearTimeout(monthResizeTimer);
+    }
+    monthResizeTimer = window.setTimeout(() => {
+      monthResizeTimer = null;
+      if (state.view === "month") {
+        renderMonth();
+      }
+    }, MONTH_RESIZE_DEBOUNCE_MS);
+  }
+
+  function trimMonthEventStacks() {
+    if (!els.monthGrid) {
+      return;
+    }
+
+    const measurements = Array.from(els.monthGrid.querySelectorAll(".event-stack"))
+      .map(measureMonthEventStack)
+      .filter(Boolean);
+
+    measurements.forEach(applyMonthEventStackTrim);
+  }
+
+  function measureMonthEventStack(stack) {
+    const chips = Array.from(stack.querySelectorAll(".event-chip"));
+    const more = stack.querySelector(".more-chip");
+    if (chips.length === 0 || !more) {
+      return null;
+    }
+
+    const availableHeight = stack.getBoundingClientRect().height;
+    const chipHeights = chips.map((chip) => chip.getBoundingClientRect().height);
+    const moreHeight = more.getBoundingClientRect().height;
+    const gap = measureMonthStackGap(stack, chips, more);
+    const visibleCount = fitMonthVisibleEventCount(chipHeights, moreHeight, gap, availableHeight);
+
+    return {
+      chips,
+      hiddenCount: chips.length - visibleCount,
+      more,
+      stack,
+      visibleCount
+    };
+  }
+
+  function measureMonthStackGap(stack, chips, more) {
+    const items = [...chips, more];
+    if (items.length >= 2) {
+      const firstRect = items[0].getBoundingClientRect();
+      const secondRect = items[1].getBoundingClientRect();
+      const measuredGap = secondRect.top - firstRect.bottom;
+      if (Number.isFinite(measuredGap) && measuredGap >= 0) {
+        return measuredGap;
+      }
+    }
+
+    const styles = window.getComputedStyle(stack);
+    const gap = Number.parseFloat(styles.rowGap || styles.gap);
+    return Number.isFinite(gap) ? gap : 0;
+  }
+
+  function fitMonthVisibleEventCount(chipHeights, moreHeight, gap, availableHeight) {
+    if (chipHeights.length === 0) {
+      return 0;
+    }
+
+    const available = Math.max(0, availableHeight);
+    const allChipHeight = stackItemsHeight(chipHeights, chipHeights.length, gap);
+    if (allChipHeight <= available + MONTH_FIT_EPSILON) {
+      return chipHeights.length;
+    }
+
+    for (let visibleCount = chipHeights.length - 1; visibleCount >= 0; visibleCount -= 1) {
+      const visibleChipsHeight = stackItemsHeight(chipHeights, visibleCount, gap);
+      const heightWithMore = visibleChipsHeight + moreHeight + (visibleCount > 0 ? gap : 0);
+      if (heightWithMore <= available + MONTH_FIT_EPSILON) {
+        return visibleCount;
+      }
+    }
+
+    return 0;
+  }
+
+  function stackItemsHeight(itemHeights, count, gap) {
+    if (count <= 0) {
+      return 0;
+    }
+    return itemHeights.slice(0, count).reduce((sum, height) => sum + height, 0) + gap * (count - 1);
+  }
+
+  function applyMonthEventStackTrim(measurement) {
+    const { chips, hiddenCount, more, stack, visibleCount } = measurement;
+
+    chips.forEach((chip, index) => {
+      if (index >= visibleCount) {
+        chip.remove();
+      }
+    });
+
+    if (hiddenCount > 0) {
+      stack.classList.add("has-more");
+      more.textContent = `他${hiddenCount}件`;
+    } else {
+      stack.classList.remove("has-more");
+      more.remove();
+    }
+  }
+
+  function renderWeek() {
+    const start = state.currentWeekStart;
+    const end = addDays(start, 6);
+    els.weekHeading.textContent = formatWeekRange(start, end);
+    renderWeekAllDay(start);
+    renderWeekTimeline(start);
+  }
+
+  function renderWeekAllDay(start) {
+    const nodes = [];
+    const label = document.createElement("div");
+    label.className = "all-day-label";
+    label.textContent = "終日";
+    nodes.push(label);
+
+    for (let offset = 0; offset < 7; offset += 1) {
+      const date = addDays(start, offset);
+      const dateStr = formatDate(date);
+      const cell = document.createElement("div");
+      cell.className = "all-day-cell";
+
+      const dayLabel = document.createElement("div");
+      dayLabel.className = "week-day-label";
+      dayLabel.textContent = `${date.getMonth() + 1}/${date.getDate()}(${WEEKDAYS[date.getDay()]})`;
+      if (dateStr === formatDate(new Date())) {
+        dayLabel.classList.add("is-today");
+      }
+      if (date.getDay() === 0) {
+        dayLabel.classList.add("is-sunday");
+      }
+      if (date.getDay() === 6) {
+        dayLabel.classList.add("is-saturday");
+      }
+      if (getHolidayName(dateStr)) {
+        dayLabel.classList.add("is-holiday");
+      }
+      cell.appendChild(dayLabel);
+
+      const eventList = document.createElement("div");
+      eventList.className = "all-day-events";
+      getOccurrencesForDate(dateStr)
+        .filter((occurrence) => !occurrence.startTime)
+        .sort(sortOccurrences)
+        .forEach((occurrence) => {
+          const chip = document.createElement("button");
+          chip.type = "button";
+          chip.className = "all-day-chip";
+          applyCategoryColor(chip, occurrence.color);
+          chip.textContent = occurrence.title;
+          chip.addEventListener("click", () => openEventForm({
+            eventId: occurrence.id,
+            occurrenceDate: occurrence.occurrenceDate
+          }));
+          eventList.appendChild(chip);
+        });
+      cell.appendChild(eventList);
+      nodes.push(cell);
+    }
+
+    els.weekAllDay.replaceChildren(...nodes);
+  }
+
+  function renderWeekTimeline(start) {
+    const nodes = [];
+    const axis = document.createElement("div");
+    axis.className = "time-axis";
+    const timelineHeight = `${(HOUR_END - HOUR_START) * HOUR_HEIGHT}px`;
+    axis.style.height = timelineHeight;
+
+    for (let hour = HOUR_START; hour < HOUR_END; hour += 1) {
+      const label = document.createElement("span");
+      label.className = "time-label";
+      label.style.top = `${((hour - HOUR_START) / (HOUR_END - HOUR_START)) * 100}%`;
+      label.textContent = `${String(hour).padStart(2, "0")}:00`;
+      axis.appendChild(label);
+    }
+    nodes.push(axis);
+
+    for (let offset = 0; offset < 7; offset += 1) {
+      const date = addDays(start, offset);
+      const dateStr = formatDate(date);
+      const column = document.createElement("div");
+      column.className = "week-column";
+      column.style.height = timelineHeight;
+      const timed = getOccurrencesForDate(dateStr)
+        .filter((occurrence) => occurrence.startTime)
+        .sort(sortOccurrences)
+        .map((occurrence) => {
+          const placement = getEventPlacement(occurrence);
+          if (!placement) {
+            return null;
+          }
+          return { occurrence, placement };
+        })
+        .filter(Boolean);
+
+      assignLanes(timed);
+      timed.forEach(({ occurrence, placement }) => {
+        const eventButton = document.createElement("button");
+        eventButton.type = "button";
+        eventButton.className = "timed-event";
+        applyCategoryColor(eventButton, occurrence.color);
+        eventButton.style.top = `${placement.top}px`;
+        eventButton.style.height = `${placement.height}px`;
+        if (placement.laneCount > 1) {
+          eventButton.style.left = `calc(${(placement.lane / placement.laneCount) * 100}% + 3px)`;
+          eventButton.style.width = `calc(${100 / placement.laneCount}% - 6px)`;
+          eventButton.style.right = "auto";
+        }
+
+        const title = document.createElement("span");
+        title.textContent = occurrence.title;
+        const time = document.createElement("small");
+        time.textContent = eventTimeLabel(occurrence);
+        eventButton.append(title, time);
+        eventButton.addEventListener("click", () => openEventForm({
+          eventId: occurrence.id,
+          occurrenceDate: occurrence.occurrenceDate
+        }));
+        column.appendChild(eventButton);
+      });
+      nodes.push(column);
+    }
+
+    els.weekTimeline.replaceChildren(...nodes);
+  }
+
+  function renderTodos() {
+    const undoneCount = state.todos.filter((todo) => !todo.done).length;
+    els.todoBadge.hidden = undoneCount === 0;
+    els.todoBadge.textContent = String(undoneCount);
+    els.todoCountText.textContent = undoneCount === 0 ? "未完了のタスクはありません" : `未完了 ${undoneCount}件`;
+
+    if (state.todos.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "empty-state";
+      empty.textContent = "タスクはまだありません";
+      els.todoList.replaceChildren(empty);
+      return;
+    }
+
+    const sorted = [...state.todos].sort((a, b) => {
+      if (a.done !== b.done) {
+        return Number(a.done) - Number(b.done);
+      }
+      return b.createdAt.localeCompare(a.createdAt);
+    });
+
+    const nodes = sorted.map((todo) => {
+      const row = document.createElement("div");
+      row.className = "todo-row";
+      row.classList.toggle("is-done", todo.done);
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = todo.done;
+      checkbox.setAttribute("aria-label", "完了");
+      checkbox.addEventListener("change", () => {
+        todo.done = checkbox.checked;
+        saveTodos();
+        renderTodos();
+      });
+
+      const title = document.createElement("div");
+      title.className = "todo-title";
+      title.textContent = todo.title;
+
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.className = "tiny-delete";
+      deleteButton.setAttribute("aria-label", "削除");
+      deleteButton.textContent = "×";
+      deleteButton.addEventListener("click", () => {
+        state.todos = state.todos.filter((item) => item.id !== todo.id);
+        saveTodos();
+        renderTodos();
+      });
+
+      row.append(checkbox, title, deleteButton);
+      return row;
+    });
+
+    els.todoList.replaceChildren(...nodes);
+  }
+
+  function renderSettings() {
+    els.notificationToggle.checked = Boolean(state.settings.notifications);
+    setReminderControlValue(els.defaultReminderSelect, els.defaultReminderCustom, state.settings.defaultReminder);
+    setDefaultReminderDisabled(!state.settings.notifications);
+    renderCategorySettings();
+  }
+
+  function renderEventColorOptions() {
+    const selectedKey = isKnownCategoryKey(els.eventColor.value) ? els.eventColor.value : firstCategoryKey();
+    const buttons = getCategories().map((category) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "color-option";
+      button.dataset.categoryKey = category.key;
+      button.classList.toggle("is-selected", category.key === selectedKey);
+
+      const swatch = document.createElement("span");
+      swatch.className = "swatch";
+      applyRawColor(swatch, category.color);
+
+      const label = document.createElement("span");
+      label.className = "color-option-label";
+      label.textContent = category.label;
+
+      button.append(swatch, label);
+      return button;
+    });
+
+    els.colorOptions.replaceChildren(...buttons);
+    setSelectedColor(selectedKey);
+  }
+
+  function renderCategorySettings(focusKey) {
+    const categories = getCategories();
+    const rows = categories.map((category) => {
+      const row = document.createElement("div");
+      row.className = "category-settings-row";
+      row.dataset.categoryKey = category.key;
+
+      const colorCell = document.createElement("div");
+      colorCell.className = "category-color-cell";
+
+      const colorButton = document.createElement("button");
+      colorButton.type = "button";
+      colorButton.className = "category-swatch-button";
+      colorButton.dataset.categoryKey = category.key;
+      colorButton.setAttribute("aria-label", `${category.label}の色を変更`);
+      applyRawColor(colorButton, category.color);
+      colorCell.appendChild(colorButton);
+
+      if (state.categoryPaletteFor === category.key) {
+        colorCell.appendChild(createCategoryPalette(category));
+      }
+
+      const nameInput = document.createElement("input");
+      nameInput.type = "text";
+      nameInput.className = "category-name-input";
+      nameInput.maxLength = CATEGORY_LABEL_MAX_LENGTH;
+      nameInput.value = category.label;
+      nameInput.dataset.categoryKey = category.key;
+      nameInput.setAttribute("aria-label", "カテゴリ名");
+
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.className = "category-delete-button";
+      deleteButton.dataset.categoryKey = category.key;
+      deleteButton.disabled = categories.length <= 1;
+      deleteButton.setAttribute("aria-label", `${category.label}を削除`);
+      deleteButton.textContent = "×";
+
+      row.append(colorCell, nameInput, deleteButton);
+      return row;
+    });
+
+    els.categorySettingsList.replaceChildren(...rows);
+    els.addCategoryButton.disabled = categories.length >= CATEGORY_MAX_COUNT;
+
+    if (focusKey) {
+      window.setTimeout(() => {
+        const input = els.categorySettingsList.querySelector(`.category-name-input[data-category-key="${cssEscape(focusKey)}"]`);
+        if (input) {
+          input.focus();
+          input.select();
+        }
+      }, 0);
+    }
+  }
+
+  function createCategoryPalette(category) {
+    const palette = document.createElement("div");
+    palette.className = "category-palette";
+    palette.setAttribute("role", "listbox");
+    palette.setAttribute("aria-label", `${category.label}の色`);
+
+    CATEGORY_PALETTE.forEach((color) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "palette-color-button";
+      button.dataset.categoryKey = category.key;
+      button.dataset.color = color;
+      button.classList.toggle("is-selected", category.color.toUpperCase() === color);
+      button.setAttribute("aria-label", color);
+      applyRawColor(button, color);
+      palette.appendChild(button);
+    });
+
+    return palette;
+  }
+
+  function handleEventCategoryClick(event) {
+    if (!(event.target instanceof Element)) {
+      return;
+    }
+    const button = event.target.closest(".color-option");
+    if (!button || !els.colorOptions.contains(button)) {
+      return;
+    }
+    setSelectedColor(button.dataset.categoryKey);
+  }
+
+  function handleEventReminderChange() {
+    updateEventReminderAvailability();
+    if (els.eventReminder.value === "custom") {
+      setTimeout(() => els.eventReminderCustom.focus(), 0);
+    }
+  }
+
+  function handleDefaultReminderChange() {
+    updateReminderCustomVisibility(els.defaultReminderSelect, els.defaultReminderCustom);
+    const value = readReminderControlValue(els.defaultReminderSelect, els.defaultReminderCustom);
+    if (value === undefined) {
+      setTimeout(() => els.defaultReminderCustom.focus(), 0);
+      return;
+    }
+    state.settings.defaultReminder = value;
+    saveSettings();
+  }
+
+  function handleDefaultReminderCustomInput() {
+    if (els.defaultReminderSelect.value !== "custom") {
+      return;
+    }
+    const value = readReminderControlValue(els.defaultReminderSelect, els.defaultReminderCustom);
+    if (value === undefined) {
+      return;
+    }
+    state.settings.defaultReminder = value;
+    saveSettings();
+  }
+
+  function setDefaultReminderDisabled(disabled) {
+    els.defaultReminderSelect.disabled = disabled;
+    updateReminderCustomVisibility(els.defaultReminderSelect, els.defaultReminderCustom, disabled);
+  }
+
+  function updateEventReminderAvailability() {
+    const hasStartTime = isValidTimeString(els.eventStart.value);
+    els.eventReminder.disabled = !hasStartTime;
+    els.eventReminderUnavailable.hidden = hasStartTime;
+    if (!hasStartTime) {
+      els.eventReminderCustom.hidden = true;
+      els.eventReminderCustom.disabled = true;
+      return;
+    }
+    updateReminderCustomVisibility(els.eventReminder, els.eventReminderCustom, !hasStartTime);
+  }
+
+  function setReminderControlValue(select, customInput, reminder) {
+    const normalized = normalizeReminderValue(reminder, DEFAULT_REMINDER_MINUTES);
+    if (normalized === null) {
+      select.value = "none";
+      customInput.value = "";
+    } else if (REMINDER_PRESET_VALUES.includes(normalized)) {
+      select.value = String(normalized);
+      customInput.value = "";
+    } else {
+      select.value = "custom";
+      customInput.value = String(normalized);
+    }
+    updateReminderCustomVisibility(select, customInput);
+  }
+
+  function updateReminderCustomVisibility(select, customInput, disabled) {
+    const showCustom = select.value === "custom";
+    customInput.hidden = !showCustom;
+    customInput.disabled = Boolean(disabled) || !showCustom;
+  }
+
+  function readReminderControlValue(select, customInput) {
+    if (select.value === "none") {
+      return null;
+    }
+    if (select.value === "custom") {
+      const customValue = parseIntegerInput(customInput.value);
+      if (customValue === null || customValue < 1 || customValue > REMINDER_CUSTOM_MAX_MINUTES) {
+        return undefined;
+      }
+      return customValue;
+    }
+
+    const presetValue = Number(select.value);
+    if (REMINDER_PRESET_VALUES.includes(presetValue)) {
+      return presetValue;
+    }
+    return undefined;
+  }
+
+  function parseIntegerInput(value) {
+    if (typeof value !== "string" || value.trim() === "") {
+      return null;
+    }
+    const number = Number(value);
+    return Number.isInteger(number) ? number : null;
+  }
+
+  function normalizeReminderValue(value, fallback) {
+    if (value === null) {
+      return null;
+    }
+    const number = typeof value === "number" ? value : Number(value);
+    if (Number.isInteger(number) && number >= 0 && number <= REMINDER_CUSTOM_MAX_MINUTES) {
+      return number;
+    }
+    return fallback;
+  }
+
+  function handleCategorySettingsClick(event) {
+    if (!(event.target instanceof Element)) {
+      return;
+    }
+    const paletteButton = event.target.closest(".palette-color-button");
+    if (paletteButton && els.categorySettingsList.contains(paletteButton)) {
+      const category = findCategory(paletteButton.dataset.categoryKey);
+      const color = normalizeHexColor(paletteButton.dataset.color);
+      if (category && color && category.color !== color) {
+        category.color = color;
+        saveSettings();
+        renderCategoryDependents();
+      }
+      state.categoryPaletteFor = null;
+      renderCategorySettings();
+      return;
+    }
+
+    const swatchButton = event.target.closest(".category-swatch-button");
+    if (swatchButton && els.categorySettingsList.contains(swatchButton)) {
+      const key = swatchButton.dataset.categoryKey;
+      state.categoryPaletteFor = state.categoryPaletteFor === key ? null : key;
+      renderCategorySettings();
+      return;
+    }
+
+    const deleteButton = event.target.closest(".category-delete-button");
+    if (deleteButton && els.categorySettingsList.contains(deleteButton)) {
+      deleteCategory(deleteButton.dataset.categoryKey);
+    }
+  }
+
+  function handleCategoryNameFocus(event) {
+    const input = categoryNameInputFromEvent(event);
+    if (!input) {
+      return;
+    }
+    const category = findCategory(input.dataset.categoryKey);
+    input.dataset.previousLabel = category ? category.label : input.value;
+  }
+
+  function handleCategoryNameInput(event) {
+    const input = categoryNameInputFromEvent(event);
+    if (!input) {
+      return;
+    }
+    const category = findCategory(input.dataset.categoryKey);
+    if (!category) {
+      return;
+    }
+
+    const nextLabel = normalizeCategoryLabel(input.value);
+    if (!nextLabel) {
+      return;
+    }
+    if (category.label === nextLabel) {
+      return;
+    }
+    category.label = nextLabel;
+    saveSettings();
+    renderCategoryDependents();
+  }
+
+  function handleCategoryNameBlur(event) {
+    const input = categoryNameInputFromEvent(event);
+    if (!input) {
+      return;
+    }
+    const category = findCategory(input.dataset.categoryKey);
+    if (!category) {
+      return;
+    }
+
+    const nextLabel = normalizeCategoryLabel(input.value);
+    if (!nextLabel) {
+      const previousLabel = normalizeCategoryLabel(input.dataset.previousLabel) || category.label;
+      if (category.label !== previousLabel) {
+        category.label = previousLabel;
+        saveSettings();
+        renderCategoryDependents();
+      }
+      input.value = previousLabel;
+      return;
+    }
+
+    if (category.label !== nextLabel) {
+      category.label = nextLabel;
+      saveSettings();
+      renderCategoryDependents();
+    }
+    input.value = category.label;
+  }
+
+  function categoryNameInputFromEvent(event) {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement) || !target.classList.contains("category-name-input")) {
+      return null;
+    }
+    return target;
+  }
+
+  function handleAddCategory() {
+    const categories = getCategories();
+    if (categories.length >= CATEGORY_MAX_COUNT) {
+      return;
+    }
+
+    const category = {
+      key: createCategoryKey(),
+      label: "新しいカテゴリ",
+      color: firstUnusedCategoryColor()
+    };
+    categories.push(category);
+    state.categoryPaletteFor = null;
+    saveSettings();
+    renderCategorySettings(category.key);
+    renderCategoryDependents();
+  }
+
+  function deleteCategory(key) {
+    const categories = getCategories();
+    if (categories.length <= 1 || !isKnownCategoryKey(key)) {
+      return;
+    }
+
+    const fallback = fallbackCategoryForDelete(key);
+    if (!fallback) {
+      return;
+    }
+
+    const affectedCount = state.events.filter((event) => event.color === key).length;
+    if (affectedCount > 0) {
+      const confirmed = window.confirm(`${affectedCount}件の予定は『${fallback.label}』に変更されます。削除しますか？`);
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    if (affectedCount > 0) {
+      state.events.forEach((event) => {
+        if (event.color === key) {
+          event.color = fallback.key;
+        }
+      });
+      saveEvents();
+    }
+
+    state.settings.categories = categories.filter((category) => category.key !== key);
+    state.categoryPaletteFor = null;
+    if (els.eventColor.value === key) {
+      els.eventColor.value = fallback.key;
+    }
+    saveSettings();
+    renderCategorySettings();
+    renderCategoryDependents();
+  }
+
+  function handleDocumentClick(event) {
+    if (!state.categoryPaletteFor) {
+      return;
+    }
+    if (!(event.target instanceof Element)) {
+      return;
+    }
+    if (event.target.closest(".category-settings-row")) {
+      return;
+    }
+    state.categoryPaletteFor = null;
+    renderCategorySettings();
+  }
+
+  function renderCategoryDependents() {
+    const selectedKey = els.eventColor.value;
+    renderEventColorOptions();
+    setSelectedColor(selectedKey);
+    renderMonth();
+    renderWeek();
+    if (!els.dayPanelBackdrop.hidden) {
+      renderDayPanel();
+    }
+  }
+
+  function openDayPanel(dateStr) {
+    state.selectedDate = dateStr;
+    renderMonth();
+    renderDayPanel();
+    els.dayPanelBackdrop.hidden = false;
+  }
+
+  function renderDayPanel() {
+    const dateStr = state.selectedDate || formatDate(new Date());
+    const holidayName = getHolidayName(dateStr);
+    const events = getOccurrencesForDate(dateStr).sort(sortOccurrences);
+
+    els.selectedDayTitle.textContent = formatLongDate(dateStr);
+    els.selectedDayHoliday.textContent = holidayName || "";
+
+    if (events.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "empty-state";
+      empty.textContent = "この日の予定はありません";
+      els.selectedDayEvents.replaceChildren(empty);
+      return;
+    }
+
+    const nodes = events.map((occurrence) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "day-event-row";
+
+      const dot = document.createElement("span");
+      dot.className = "event-dot";
+      applyCategoryColor(dot, occurrence.color);
+
+      const content = document.createElement("span");
+      const title = document.createElement("span");
+      title.className = "day-event-title";
+      title.textContent = occurrence.title;
+      const meta = document.createElement("span");
+      meta.className = "day-event-meta";
+      meta.textContent = dayEventMeta(occurrence);
+
+      content.append(title, meta);
+      button.append(dot, content);
+      button.addEventListener("click", () => openEventForm({
+        eventId: occurrence.id,
+        occurrenceDate: occurrence.occurrenceDate
+      }));
+      return button;
+    });
+
+    els.selectedDayEvents.replaceChildren(...nodes);
+  }
+
+  function closeDayPanel() {
+    els.dayPanelBackdrop.hidden = true;
+  }
+
+  function openEventForm(options) {
+    const config = options || {};
+    const existing = config.eventId ? state.events.find((event) => event.id === config.eventId) : null;
+    if (config.eventId && !existing) {
+      showToast("予定が見つかりませんでした", "error");
+      return;
+    }
+
+    state.editing = existing ? {
+      id: existing.id,
+      occurrenceDate: config.occurrenceDate || existing.date
+    } : null;
+
+    els.eventForm.reset();
+    els.formError.textContent = "";
+    els.deleteEventButton.hidden = !existing;
+    els.eventModalTitle.textContent = existing ? "予定を編集" : "予定を追加";
+    renderEventColorOptions();
+
+    if (existing) {
+      els.eventTitle.value = existing.title;
+      els.eventDate.value = existing.date;
+      els.eventStart.value = existing.startTime || "";
+      els.eventEnd.value = existing.endTime || "";
+      els.eventRecurrence.value = existing.recurrence ? existing.recurrence.freq : "none";
+      setReminderControlValue(els.eventReminder, els.eventReminderCustom, existing.reminder);
+      els.eventMemo.value = existing.memo || "";
+      setSelectedColor(existing.color);
+      els.eventModalHint.textContent = existing.recurrence
+        ? `${formatLongDate(state.editing.occurrenceDate)}の繰り返し予定です。編集はすべての回に反映されます。`
+        : "";
+    } else {
+      const preset = config.preset || {};
+      els.eventTitle.value = preset.title || config.title || "";
+      els.eventDate.value = isValidDateString(preset.date) ? preset.date : (config.date || "");
+      els.eventStart.value = isValidTimeString(preset.startTime) ? preset.startTime : "";
+      els.eventEnd.value = isValidTimeString(preset.endTime) ? preset.endTime : "";
+      els.eventRecurrence.value = normalizePresetRecurrenceValue(preset.recurrence);
+      setReminderControlValue(
+        els.eventReminder,
+        els.eventReminderCustom,
+        Object.prototype.hasOwnProperty.call(preset, "reminder") ? preset.reminder : state.settings.defaultReminder
+      );
+      els.eventMemo.value = preset.memo || "";
+      setSelectedColor(isKnownCategoryKey(preset.color) ? preset.color : firstCategoryKey());
+      els.eventModalHint.textContent = config.hint || "";
+    }
+
+    updateEventReminderAvailability();
+    els.eventModal.hidden = false;
+    setTimeout(() => els.eventTitle.focus(), 0);
+  }
+
+  function closeEventModal() {
+    els.eventModal.hidden = true;
+    state.editing = null;
+    els.formError.textContent = "";
+  }
+
+  function handleEventSubmit(event) {
+    event.preventDefault();
+    const eventData = readEventForm();
+    if (!eventData) {
+      return;
+    }
+
+    if (state.editing) {
+      const index = state.events.findIndex((item) => item.id === state.editing.id);
+      if (index === -1) {
+        showToast("予定が見つかりませんでした", "error");
+        closeEventModal();
+        return;
+      }
+      const previous = state.events[index];
+      state.events[index] = {
+        ...previous,
+        ...eventData,
+        exceptions: eventData.recurrence ? sanitizeExceptions(previous.exceptions) : []
+      };
+    } else {
+      state.events.push({
+        id: createId("evt"),
+        ...eventData,
+        exceptions: []
+      });
+    }
+
+    saveEvents();
+    closeEventModal();
+    renderAll();
+    if (!els.dayPanelBackdrop.hidden) {
+      renderDayPanel();
+    }
+  }
+
+  function readEventForm() {
+    const title = els.eventTitle.value.trim();
+    const date = els.eventDate.value;
+    const startTime = els.eventStart.value || null;
+    const endTime = els.eventEnd.value || null;
+    const color = isKnownCategoryKey(els.eventColor.value) ? els.eventColor.value : firstCategoryKey();
+    const memo = els.eventMemo.value.trim();
+    const recurrenceValue = els.eventRecurrence.value;
+
+    if (!title) {
+      setFormError("タイトルを入力してください");
+      return null;
+    }
+    if (!isValidDateString(date)) {
+      setFormError("日付を選択してください");
+      return null;
+    }
+    if (startTime && !isValidTimeString(startTime)) {
+      setFormError("開始時刻を確認してください");
+      return null;
+    }
+    if (endTime && !isValidTimeString(endTime)) {
+      setFormError("終了時刻を確認してください");
+      return null;
+    }
+    if (!startTime && endTime) {
+      setFormError("終了時刻だけを設定することはできません");
+      return null;
+    }
+    if (startTime && endTime && timeToMinutes(endTime) <= timeToMinutes(startTime)) {
+      setFormError("終了時刻は開始時刻より後にしてください");
+      return null;
+    }
+
+    let reminder = null;
+    if (startTime) {
+      reminder = readReminderControlValue(els.eventReminder, els.eventReminderCustom);
+      if (reminder === undefined) {
+        setFormError("リマインドの分数は1〜10080で入力してください");
+        return null;
+      }
+    }
+
+    return {
+      title,
+      date,
+      startTime,
+      endTime,
+      color,
+      memo,
+      reminder,
+      recurrence: buildRecurrence(recurrenceValue, date)
+    };
+  }
+
+  function setFormError(message) {
+    els.formError.textContent = message;
+  }
+
+  function setSelectedColor(color) {
+    const nextColor = isKnownCategoryKey(color) ? color : firstCategoryKey();
+    els.eventColor.value = nextColor;
+    Array.from(els.colorOptions.querySelectorAll(".color-option")).forEach((button) => {
+      button.classList.toggle("is-selected", button.dataset.categoryKey === nextColor);
+    });
+  }
+
+  function handleDeleteEvent() {
+    if (!state.editing) {
+      return;
+    }
+    const event = state.events.find((item) => item.id === state.editing.id);
+    if (!event) {
+      showToast("予定が見つかりませんでした", "error");
+      closeEventModal();
+      return;
+    }
+
+    if (event.recurrence) {
+      showChoice({
+        title: "繰り返し予定の削除",
+        message: "この日だけ削除するか、すべての繰り返し予定を削除するか選んでください。",
+        actions: [
+          {
+            label: "この日だけ削除",
+            className: "secondary-button",
+            onClick: () => deleteSingleOccurrence(event.id, state.editing.occurrenceDate)
+          },
+          {
+            label: "すべて削除",
+            className: "danger-outline-button",
+            onClick: () => deleteWholeEvent(event.id)
+          }
+        ]
+      });
+      return;
+    }
+
+    if (window.confirm("この予定を削除しますか？")) {
+      deleteWholeEvent(event.id);
+    }
+  }
+
+  function deleteSingleOccurrence(eventId, dateStr) {
+    const event = state.events.find((item) => item.id === eventId);
+    if (!event) {
+      return;
+    }
+    const exceptions = sanitizeExceptions(event.exceptions);
+    if (!exceptions.includes(dateStr)) {
+      exceptions.push(dateStr);
+    }
+    event.exceptions = exceptions;
+    saveEvents();
+    closeChoiceModal();
+    closeEventModal();
+    renderAll();
+    if (!els.dayPanelBackdrop.hidden) {
+      renderDayPanel();
+    }
+  }
+
+  function deleteWholeEvent(eventId) {
+    state.events = state.events.filter((item) => item.id !== eventId);
+    saveEvents();
+    closeChoiceModal();
+    closeEventModal();
+    renderAll();
+    if (!els.dayPanelBackdrop.hidden) {
+      renderDayPanel();
+    }
+  }
+
+  function handleChatSubmit(event) {
+    event.preventDefault();
+    const text = els.chatInput.value.trim();
+    if (!text) {
+      return;
+    }
+
+    let parsed = null;
+    if (typeof window.parseScheduleText === "function") {
+      try {
+        parsed = window.parseScheduleText(text, new Date());
+      } catch (error) {
+        parsed = null;
+      }
+    }
+
+    els.chatInput.value = "";
+
+    if (isValidParsedSchedule(parsed)) {
+      openEventForm({
+        preset: {
+          title: parsed.title,
+          date: parsed.date,
+          startTime: parsed.startTime,
+          endTime: parsed.endTime,
+          recurrence: parsed.recurrence
+        },
+        hint: "内容を確認して保存してください。"
+      });
+      return;
+    }
+
+    showToast("日時を読み取れませんでした", "error");
+    openEventForm({
+      preset: {
+        title: text,
+        date: "",
+        startTime: null,
+        endTime: null,
+        recurrence: null
+      },
+      hint: "日時を読み取れませんでした。必要な項目を入力してください。"
+    });
+  }
+
+  function setupVoiceInput() {
+    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (typeof Recognition !== "function") {
+      els.voiceButton.hidden = false;
+      els.chatBar.classList.add("has-voice");
+      els.voiceButton.addEventListener("click", () => {
+        showToast("マイクを利用できませんでした", "error");
+      });
+      return;
+    }
+
+    els.voiceButton.hidden = false;
+    els.chatBar.classList.add("has-voice");
+    els.voiceButton.addEventListener("click", toggleVoiceInput);
+  }
+
+  function toggleVoiceInput() {
+    if (state.voiceListening) {
+      stopVoiceInput();
+      return;
+    }
+    startVoiceInput();
+  }
+
+  function startVoiceInput() {
+    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (typeof Recognition !== "function") {
+      els.voiceButton.hidden = true;
+      return;
+    }
+
+    const recognition = new Recognition();
+    recognition.lang = "ja-JP";
+    recognition.interimResults = true;
+    recognition.continuous = false;
+
+    state.voiceRecognition = recognition;
+    state.voiceListening = true;
+    state.voiceStopping = false;
+    state.voiceBaseText = els.chatInput.value.trim();
+    state.voiceFinalText = "";
+    setVoiceButtonState(true);
+
+    recognition.onresult = handleVoiceResult;
+    recognition.onerror = handleVoiceError;
+    recognition.onend = finishVoiceInput;
+
+    try {
+      recognition.start();
+    } catch (error) {
+      finishVoiceInput();
+      showToast("音声入力を開始できませんでした", "error");
+    }
+  }
+
+  function stopVoiceInput() {
+    if (!state.voiceRecognition) {
+      finishVoiceInput();
+      return;
+    }
+    state.voiceStopping = true;
+    try {
+      state.voiceRecognition.stop();
+    } catch (error) {
+      finishVoiceInput();
+    }
+  }
+
+  function handleVoiceResult(event) {
+    let finalText = "";
+    let interimText = "";
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const result = event.results[index];
+      const transcript = result && result[0] ? result[0].transcript : "";
+      if (result && result.isFinal) {
+        finalText += transcript;
+      } else {
+        interimText += transcript;
+      }
+    }
+
+    if (finalText) {
+      state.voiceFinalText += finalText;
+    }
+    els.chatInput.value = joinVoiceText(state.voiceBaseText, state.voiceFinalText + interimText);
+  }
+
+  function handleVoiceError(event) {
+    const code = event && event.error ? event.error : "";
+    if (state.voiceStopping && code === "aborted") {
+      return;
+    }
+    showToast(voiceErrorMessage(code), "error");
+  }
+
+  function finishVoiceInput() {
+    state.voiceListening = false;
+    state.voiceStopping = false;
+    state.voiceRecognition = null;
+    setVoiceButtonState(false);
+    els.chatInput.focus();
+  }
+
+  function setVoiceButtonState(isListening) {
+    els.voiceButton.classList.toggle("is-listening", isListening);
+    els.voiceButton.setAttribute("aria-pressed", isListening ? "true" : "false");
+  }
+
+  function joinVoiceText(baseText, transcript) {
+    const cleanedTranscript = transcript.trimStart();
+    if (!baseText) {
+      return cleanedTranscript;
+    }
+    if (!cleanedTranscript) {
+      return baseText;
+    }
+    return `${baseText} ${cleanedTranscript}`;
+  }
+
+  function voiceErrorMessage(code) {
+    if (code === "not-allowed" || code === "service-not-allowed") {
+      return "マイクの使用が許可されませんでした";
+    }
+    if (code === "audio-capture") {
+      return "マイクを利用できませんでした";
+    }
+    if (code === "no-speech") {
+      return "音声を認識できませんでした";
+    }
+    if (code === "network") {
+      return "音声認識に失敗しました";
+    }
+    return "音声入力でエラーが発生しました";
+  }
+
+  function openImportModal() {
+    resetImportModal();
+    updateOcrAvailability();
+    els.importModal.hidden = false;
+    setTimeout(() => els.importText.focus(), 0);
+  }
+
+  function closeImportModal() {
+    els.importModal.hidden = true;
+    resetImportProgress();
+  }
+
+  function resetImportModal() {
+    state.importCandidates = [];
+    clearImportImagePreview();
+    els.importImageInput.value = "";
+    els.importText.value = "";
+    els.importCandidateSummary.textContent = "";
+    els.importCandidateList.replaceChildren();
+    updateImportRegisterButton();
+    resetImportProgress();
+  }
+
+  function clearImportImagePreview() {
+    if (state.importImageUrl) {
+      URL.revokeObjectURL(state.importImageUrl);
+      state.importImageUrl = null;
+    }
+    els.ocrThumbnail.hidden = true;
+    els.ocrThumbnail.removeAttribute("src");
+  }
+
+  function updateOcrAvailability() {
+    const available = hasAvailableOcr();
+    els.ocrControls.hidden = !available;
+    els.ocrUnavailableNotice.hidden = available;
+  }
+
+  function hasAvailableOcr() {
+    const ocr = window.SchedulerOCR;
+    if (!ocr || typeof ocr.available !== "function" || typeof ocr.recognize !== "function") {
+      return false;
+    }
+    try {
+      return Boolean(ocr.available());
+    } catch (error) {
+      return false;
+    }
+  }
+
+  async function handleImportImageSelect(event) {
+    const file = event.target.files && event.target.files[0];
+    if (!file) {
+      return;
+    }
+    if (!hasAvailableOcr()) {
+      updateOcrAvailability();
+      showToast("写真読み取りはローカルサーバー起動時に利用できます", "error");
+      return;
+    }
+
+    showImportImagePreview(file);
+    setImportProgress(0, "OCR準備");
+    els.chooseImageButton.disabled = true;
+
+    try {
+      const result = await window.SchedulerOCR.recognize(file, setImportProgress);
+      const text = result && typeof result.text === "string" ? result.text : "";
+      appendImportText(text);
+      setImportProgress(100, "文字認識完了");
+      showToast("写真からテキストを読み取りました");
+    } catch (error) {
+      showToast(error && error.message ? error.message : "写真の文字認識に失敗しました", "error");
+    } finally {
+      els.chooseImageButton.disabled = false;
+      els.importImageInput.value = "";
+    }
+  }
+
+  function showImportImagePreview(file) {
+    clearImportImagePreview();
+    state.importImageUrl = URL.createObjectURL(file);
+    els.ocrThumbnail.src = state.importImageUrl;
+    els.ocrThumbnail.hidden = false;
+  }
+
+  function appendImportText(text) {
+    const nextText = text.trim();
+    if (!nextText) {
+      return;
+    }
+    const currentText = els.importText.value.trimEnd();
+    els.importText.value = currentText ? `${currentText}\n${nextText}` : nextText;
+  }
+
+  function resetImportProgress() {
+    els.ocrProgress.hidden = true;
+    els.ocrProgressPhase.textContent = "OCR準備";
+    els.ocrProgressPercent.textContent = "0%";
+    els.ocrProgressBar.style.width = "0%";
+    els.chooseImageButton.disabled = false;
+  }
+
+  function setImportProgress(percent, phase) {
+    const safePercent = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+    els.ocrProgress.hidden = false;
+    els.ocrProgressPhase.textContent = phase || "処理中";
+    els.ocrProgressPercent.textContent = `${safePercent}%`;
+    els.ocrProgressBar.style.width = `${safePercent}%`;
+  }
+
+  function handleParseImport() {
+    const lines = els.importText.value
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (lines.length === 0) {
+      state.importCandidates = [];
+      renderImportCandidates();
+      showToast("解析するテキストを入力してください", "error");
+      return;
+    }
+
+    state.importCandidates = lines.map(parseImportLine);
+    renderImportCandidates();
+  }
+
+  function parseImportLine(line, index) {
+    let parsed = null;
+    if (typeof window.parseScheduleText === "function") {
+      try {
+        parsed = window.parseScheduleText(line, new Date());
+      } catch (error) {
+        parsed = null;
+      }
+    }
+
+    const valid = isValidParsedSchedule(parsed);
+    return {
+      id: `candidate-${index}`,
+      line,
+      parsed: valid ? parsed : null,
+      selected: valid,
+      valid
+    };
+  }
+
+  function renderImportCandidates() {
+    const nodes = state.importCandidates.map((candidate, index) => {
+      const row = document.createElement("label");
+      row.className = "import-candidate";
+      row.classList.toggle("is-failed", !candidate.valid);
+
+      if (candidate.valid) {
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = candidate.selected;
+        checkbox.dataset.index = String(index);
+        row.appendChild(checkbox);
+      } else {
+        const marker = document.createElement("span");
+        marker.className = "candidate-marker";
+        marker.setAttribute("aria-hidden", "true");
+        row.appendChild(marker);
+      }
+
+      const content = document.createElement("span");
+      content.className = "candidate-content";
+      const title = document.createElement("span");
+      title.className = "candidate-title";
+      title.textContent = candidate.valid ? formatImportCandidate(candidate.parsed) : candidate.line;
+      content.appendChild(title);
+
+      if (!candidate.valid) {
+        const note = document.createElement("span");
+        note.className = "candidate-note";
+        note.textContent = "日時を読み取れず";
+        content.appendChild(note);
+      }
+
+      row.appendChild(content);
+      return row;
+    });
+
+    els.importCandidateList.replaceChildren(...nodes);
+
+    const successCount = state.importCandidates.filter((candidate) => candidate.valid).length;
+    const failedCount = state.importCandidates.length - successCount;
+    if (state.importCandidates.length === 0) {
+      els.importCandidateSummary.textContent = "";
+    } else {
+      els.importCandidateSummary.textContent = `${successCount}件成功 / ${failedCount}件失敗`;
+    }
+    updateImportRegisterButton();
+  }
+
+  function handleImportCandidateToggle(event) {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement) || target.type !== "checkbox") {
+      return;
+    }
+    const index = Number(target.dataset.index);
+    const candidate = state.importCandidates[index];
+    if (!candidate || !candidate.valid) {
+      return;
+    }
+    candidate.selected = target.checked;
+    updateImportRegisterButton();
+  }
+
+  function updateImportRegisterButton() {
+    const selectedCount = selectedImportCandidates().length;
+    els.registerImportButton.disabled = selectedCount === 0;
+    els.registerImportButton.textContent = `選択した${selectedCount}件を登録`;
+  }
+
+  function selectedImportCandidates() {
+    return state.importCandidates.filter((candidate) => candidate.valid && candidate.selected);
+  }
+
+  function handleRegisterImport() {
+    const selected = selectedImportCandidates();
+    if (selected.length === 0) {
+      showToast("登録する予定を選択してください", "error");
+      return;
+    }
+
+    selected.forEach((candidate) => {
+      state.events.push(importCandidateToEvent(candidate));
+    });
+    saveEvents();
+    closeImportModal();
+    renderAll();
+    if (!els.dayPanelBackdrop.hidden) {
+      renderDayPanel();
+    }
+    showToast(`${selected.length}件登録しました`);
+  }
+
+  function importCandidateToEvent(candidate) {
+    const parsed = candidate.parsed;
+    const startTime = parsed.startTime || null;
+    return {
+      id: createId("evt"),
+      title: parsed.title.trim(),
+      date: parsed.date,
+      startTime,
+      endTime: validImportEndTime(startTime, parsed.endTime) ? parsed.endTime : null,
+      color: firstCategoryKey(),
+      memo: "",
+      reminder: startTime ? state.settings.defaultReminder : null,
+      recurrence: normalizeRecurrence(parsed.recurrence, parsed.date),
+      exceptions: []
+    };
+  }
+
+  function validImportEndTime(startTime, endTime) {
+    return isValidTimeString(startTime) && isValidTimeString(endTime) && timeToMinutes(endTime) > timeToMinutes(startTime);
+  }
+
+  function formatImportCandidate(parsed) {
+    const date = parseDate(parsed.date);
+    const dateLabel = date ? `${date.getMonth() + 1}/${date.getDate()}(${WEEKDAYS[date.getDay()]})` : parsed.date;
+    const timeLabel = parsed.startTime
+      ? (parsed.endTime ? `${parsed.startTime}-${parsed.endTime}` : parsed.startTime)
+      : "終日";
+    const recurrence = parsed.recurrence ? ` / ${recurrenceLabel(parsed.recurrence.freq)}` : "";
+    return `${dateLabel} ${timeLabel} ${parsed.title}${recurrence}`;
+  }
+
+  function handleTodoSubmit(event) {
+    event.preventDefault();
+    const title = els.todoInput.value.trim();
+    if (!title) {
+      return;
+    }
+    state.todos.push({
+      id: createId("todo"),
+      title,
+      done: false,
+      createdAt: new Date().toISOString()
+    });
+    els.todoInput.value = "";
+    saveTodos();
+    renderTodos();
+  }
+
+  async function handleNotificationToggle() {
+    const shouldEnable = els.notificationToggle.checked;
+    state.settings.notifications = shouldEnable;
+
+    if (shouldEnable && "Notification" in window) {
+      try {
+        if (window.Notification.permission === "default") {
+          await window.Notification.requestPermission();
+        }
+        if (window.Notification.permission === "denied") {
+          showToast("ブラウザ通知が拒否されているため、アプリ内通知で表示します。");
+        }
+      } catch (error) {
+        showToast("ブラウザ通知を使えないため、アプリ内通知で表示します。");
+      }
+    } else if (shouldEnable) {
+      showToast("ブラウザ通知を使えないため、アプリ内通知で表示します。");
+    }
+
+    saveSettings();
+    startNotificationTimer();
+    renderSettings();
+  }
+
+  function handleClearData() {
+    if (!window.confirm("保存済みの予定、ToDo、設定をすべて削除しますか？")) {
+      return;
+    }
+    state.events = [];
+    state.todos = [];
+    state.settings = defaultSettings();
+    try {
+      window.localStorage.removeItem(STORAGE_KEYS.events);
+      window.localStorage.removeItem(STORAGE_KEYS.todos);
+      window.localStorage.removeItem(STORAGE_KEYS.settings);
+    } catch (error) {
+      saveEvents();
+      saveTodos();
+      saveSettings();
+    }
+    startNotificationTimer();
+    closeDayPanel();
+    closeEventModal();
+    closeChoiceModal();
+    renderAll();
+    showToast("データを削除しました");
+  }
+
+  function getOccurrencesForDate(dateStr) {
+    return state.events
+      .filter((event) => eventOccursOn(event, dateStr))
+      .map((event) => ({
+        ...event,
+        occurrenceDate: dateStr,
+        occurrenceKey: `${event.id}|${dateStr}`
+      }));
+  }
+
+  function eventOccursOn(event, dateStr) {
+    if (!isValidDateString(dateStr) || !isValidDateString(event.date)) {
+      return false;
+    }
+    if (sanitizeExceptions(event.exceptions).includes(dateStr)) {
+      return false;
+    }
+    if (!event.recurrence) {
+      return event.date === dateStr;
+    }
+    if (compareDateStrings(dateStr, event.date) < 0) {
+      return false;
+    }
+
+    const date = parseDate(dateStr);
+    const start = parseDate(event.date);
+    if (!date || !start) {
+      return false;
+    }
+
+    if (event.recurrence.freq === "daily") {
+      return true;
+    }
+    if (event.recurrence.freq === "weekly") {
+      const weekday = validWeekday(event.recurrence.weekday) ? event.recurrence.weekday : start.getDay();
+      return date.getDay() === weekday;
+    }
+    if (event.recurrence.freq === "monthly") {
+      const day = validMonthDay(event.recurrence.day) ? event.recurrence.day : start.getDate();
+      const clippedDay = Math.min(day, daysInMonth(date.getFullYear(), date.getMonth()));
+      return date.getDate() === clippedDay;
+    }
+    return false;
+  }
+
+  function sortOccurrences(a, b) {
+    const aTime = a.startTime || "99:99";
+    const bTime = b.startTime || "99:99";
+    if (aTime !== bTime) {
+      return aTime.localeCompare(bTime);
+    }
+    return a.title.localeCompare(b.title, "ja");
+  }
+
+  function eventChipText(occurrence) {
+    return occurrence.startTime ? `${occurrence.startTime} ${occurrence.title}` : occurrence.title;
+  }
+
+  function createMonthEventChip(occurrence) {
+    const chip = document.createElement("div");
+    chip.className = "event-chip";
+    applyCategoryColor(chip, occurrence.color);
+
+    const title = document.createElement("span");
+    title.className = "event-chip-title";
+    title.textContent = occurrence.title;
+    chip.appendChild(title);
+
+    if (occurrence.startTime) {
+      chip.classList.add("has-time");
+      const time = document.createElement("span");
+      time.className = "event-chip-time";
+      time.textContent = occurrence.startTime;
+      chip.appendChild(time);
+    }
+
+    return chip;
+  }
+
+  function createMonthMoreChip(count) {
+    const more = document.createElement("div");
+    more.className = "more-chip";
+    more.textContent = `他${count}件`;
+    return more;
+  }
+
+  function eventTimeLabel(occurrence) {
+    if (!occurrence.startTime) {
+      return "時刻なし";
+    }
+    return occurrence.endTime ? `${occurrence.startTime}-${occurrence.endTime}` : occurrence.startTime;
+  }
+
+  function dayEventMeta(occurrence) {
+    const category = categoryLabel(occurrence.color);
+    const parts = [eventTimeLabel(occurrence), category];
+    if (occurrence.recurrence) {
+      parts.push(recurrenceLabel(occurrence.recurrence.freq));
+    }
+    return parts.join(" / ");
+  }
+
+  function getEventPlacement(occurrence) {
+    if (!occurrence.startTime) {
+      return null;
+    }
+    const start = timeToMinutes(occurrence.startTime);
+    let end = occurrence.endTime ? timeToMinutes(occurrence.endTime) : start + 60;
+    if (end <= start) {
+      end = start + 60;
+    }
+
+    const windowStart = HOUR_START * 60;
+    const windowEnd = HOUR_END * 60;
+    if (end <= windowStart || start >= windowEnd) {
+      return null;
+    }
+
+    const clippedStart = Math.max(start, windowStart);
+    const clippedEnd = Math.min(end, windowEnd);
+    const top = ((clippedStart - windowStart) / 60) * HOUR_HEIGHT;
+    const rawHeight = ((clippedEnd - clippedStart) / 60) * HOUR_HEIGHT;
+    const timelineHeight = ((windowEnd - windowStart) / 60) * HOUR_HEIGHT;
+    return {
+      start: clippedStart,
+      end: clippedEnd,
+      top,
+      height: Math.min(Math.max(26, rawHeight), Math.max(1, timelineHeight - top)),
+      lane: 0,
+      laneCount: 1
+    };
+  }
+
+  function assignLanes(items) {
+    if (items.length <= 1) {
+      return;
+    }
+
+    const sorted = [...items].sort((a, b) => a.placement.start - b.placement.start);
+    let cluster = [];
+    let clusterEnd = -1;
+
+    sorted.forEach((item) => {
+      if (cluster.length === 0 || item.placement.start < clusterEnd) {
+        cluster.push(item);
+        clusterEnd = Math.max(clusterEnd, item.placement.end);
+      } else {
+        assignClusterLanes(cluster);
+        cluster = [item];
+        clusterEnd = item.placement.end;
+      }
+    });
+
+    assignClusterLanes(cluster);
+  }
+
+  function assignClusterLanes(cluster) {
+    const laneEnds = [];
+    cluster.forEach((item) => {
+      let lane = laneEnds.findIndex((end) => end <= item.placement.start);
+      if (lane === -1) {
+        lane = laneEnds.length;
+      }
+      laneEnds[lane] = item.placement.end;
+      item.placement.lane = lane;
+    });
+
+    cluster.forEach((item) => {
+      item.placement.laneCount = laneEnds.length || 1;
+    });
+  }
+
+  function buildRecurrence(value, dateStr) {
+    if (!VALID_RECURRENCES.has(value)) {
+      return null;
+    }
+    const date = parseDate(dateStr);
+    if (!date) {
+      return null;
+    }
+    if (value === "weekly") {
+      return { freq: "weekly", weekday: date.getDay() };
+    }
+    if (value === "monthly") {
+      return { freq: "monthly", day: date.getDate() };
+    }
+    return { freq: "daily" };
+  }
+
+  function recurrenceLabel(freq) {
+    if (freq === "daily") {
+      return "毎日";
+    }
+    if (freq === "weekly") {
+      return "毎週";
+    }
+    if (freq === "monthly") {
+      return "毎月";
+    }
+    return "繰り返し";
+  }
+
+  function normalizePresetRecurrenceValue(recurrence) {
+    if (recurrence && VALID_RECURRENCES.has(recurrence.freq)) {
+      return recurrence.freq;
+    }
+    return "none";
+  }
+
+  function isValidParsedSchedule(parsed) {
+    if (!parsed || typeof parsed !== "object") {
+      return false;
+    }
+    if (typeof parsed.title !== "string" || parsed.title.trim() === "") {
+      return false;
+    }
+    if (!isValidDateString(parsed.date)) {
+      return false;
+    }
+    if (parsed.startTime !== null && parsed.startTime !== undefined && !isValidTimeString(parsed.startTime)) {
+      return false;
+    }
+    if (parsed.endTime !== null && parsed.endTime !== undefined && !isValidTimeString(parsed.endTime)) {
+      return false;
+    }
+    if (parsed.recurrence !== null && parsed.recurrence !== undefined) {
+      return Boolean(parsed.recurrence.freq && VALID_RECURRENCES.has(parsed.recurrence.freq));
+    }
+    return true;
+  }
+
+  function startNotificationTimer() {
+    if (state.notificationTimer) {
+      window.clearInterval(state.notificationTimer);
+      state.notificationTimer = null;
+    }
+    if (!state.settings.notifications) {
+      state.lastNotificationCheckAt = null;
+      return;
+    }
+    checkNotifications();
+    state.notificationTimer = window.setInterval(checkNotifications, 60000);
+  }
+
+  function checkNotifications() {
+    if (!state.settings.notifications) {
+      return;
+    }
+
+    const now = new Date();
+    const previousCheckTime = state.lastNotificationCheckAt instanceof Date ? state.lastNotificationCheckAt : null;
+    const todayStr = formatDate(now);
+    const currentDateTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes());
+    pruneNotified(todayStr);
+
+    const lookaheadDays = notificationLookaheadDays();
+    for (let offset = 0; offset <= lookaheadDays; offset += 1) {
+      const dateStr = formatDate(addDays(now, offset));
+      getOccurrencesForDate(dateStr)
+        .forEach((occurrence) => {
+          const reminder = normalizeReminderValue(occurrence.reminder, DEFAULT_REMINDER_MINUTES);
+          if (reminder === null || !occurrence.startTime) {
+            return;
+          }
+          const startDateTime = occurrenceStartDateTime(occurrence);
+          if (!startDateTime) {
+            return;
+          }
+          const targetTime = new Date(startDateTime.getTime() - reminder * 60000);
+          maybeNotify(occurrence, reminder, targetTime, previousCheckTime, currentDateTime);
+        });
+    }
+    state.lastNotificationCheckAt = currentDateTime;
+  }
+
+  function notificationLookaheadDays() {
+    const maxReminder = state.events.reduce((max, event) => {
+      const reminder = normalizeReminderValue(event.reminder, null);
+      return reminder === null ? max : Math.max(max, reminder);
+    }, 0);
+    return Math.max(2, Math.ceil(maxReminder / 1440));
+  }
+
+  function occurrenceStartDateTime(occurrence) {
+    const date = parseDate(occurrence.occurrenceDate);
+    if (!date || !isValidTimeString(occurrence.startTime)) {
+      return null;
+    }
+    const startMinute = timeToMinutes(occurrence.startTime);
+    date.setHours(Math.floor(startMinute / 60), startMinute % 60, 0, 0);
+    return date;
+  }
+
+  function maybeNotify(occurrence, reminder, targetTime, previousCheckTime, currentDateTime) {
+    const key = `${occurrence.occurrenceDate}|${occurrence.id}|${reminder}`;
+    if (state.settings.notified[key]) {
+      return;
+    }
+    if (!shouldProcessNotificationTarget(targetTime, previousCheckTime, currentDateTime)) {
+      return;
+    }
+    if (previousCheckTime && currentDateTime.getTime() - targetTime.getTime() > NOTIFICATION_CATCH_UP_LIMIT_MINUTES * 60000) {
+      markNotificationDone(key);
+      return;
+    }
+
+    const title = `${reminderLabel(reminder)}: ${occurrence.title}`;
+    const body = `${formatLongDate(occurrence.occurrenceDate)} ${eventTimeLabel(occurrence)}`;
+    sendNotification(title, body, key);
+    markNotificationDone(key);
+  }
+
+  function reminderLabel(minutes) {
+    if (minutes === 0) {
+      return "定刻";
+    }
+    if (minutes % 1440 === 0) {
+      const days = minutes / 1440;
+      return days === 1 ? "1日前" : `${days}日前`;
+    }
+    if (minutes % 60 === 0) {
+      return `${minutes / 60}時間前`;
+    }
+    return `${minutes}分前`;
+  }
+
+  function shouldProcessNotificationTarget(targetTime, previousCheckTime, currentDateTime) {
+    if (!(targetTime instanceof Date) || Number.isNaN(targetTime.getTime())) {
+      return false;
+    }
+    if (!previousCheckTime) {
+      return targetTime.getTime() === currentDateTime.getTime();
+    }
+    return previousCheckTime.getTime() < targetTime.getTime() && targetTime.getTime() <= currentDateTime.getTime();
+  }
+
+  function markNotificationDone(key) {
+    state.settings.notified[key] = new Date().toISOString();
+    saveSettings();
+  }
+
+  function sendNotification(title, body, tag) {
+    if ("Notification" in window && window.Notification.permission === "granted") {
+      try {
+        new window.Notification(title, { body, tag: `scheduler-${tag}` });
+        return;
+      } catch (error) {
+        showNotificationBanner(title, body, tag);
+        return;
+      }
+    }
+    showNotificationBanner(title, body, tag);
+  }
+
+  function showNotificationBanner(title, body, tag) {
+    const banner = document.createElement("div");
+    banner.className = "notification-banner";
+    banner.dataset.tag = tag || "";
+
+    const content = document.createElement("div");
+    content.className = "notification-banner-content";
+
+    const titleNode = document.createElement("strong");
+    titleNode.className = "notification-banner-title";
+    titleNode.textContent = title;
+
+    const bodyNode = document.createElement("span");
+    bodyNode.className = "notification-banner-body";
+    bodyNode.textContent = body;
+
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.className = "notification-banner-close";
+    closeButton.setAttribute("aria-label", "Close notification");
+    closeButton.textContent = "\u00d7";
+    closeButton.addEventListener("click", () => {
+      banner.remove();
+    });
+
+    content.append(titleNode, bodyNode);
+    banner.append(content, closeButton);
+    els.notificationBannerArea.appendChild(banner);
+  }
+
+  function pruneNotified(todayStr) {
+    const today = parseDate(todayStr);
+    if (!today || !state.settings.notified || typeof state.settings.notified !== "object") {
+      state.settings.notified = {};
+      return;
+    }
+
+    const keepAfter = formatDate(addDays(today, -2));
+    let changed = false;
+    Object.keys(state.settings.notified).forEach((key) => {
+      const datePart = key.slice(0, 10);
+      if (!isValidDateString(datePart) || datePart < keepAfter) {
+        delete state.settings.notified[key];
+        changed = true;
+      }
+    });
+    if (changed) {
+      saveSettings();
+    }
+  }
+
+  function showChoice(config) {
+    els.choiceTitle.textContent = config.title;
+    els.choiceMessage.textContent = config.message;
+    const buttons = config.actions.map((action) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = action.className || "secondary-button";
+      button.textContent = action.label;
+      button.addEventListener("click", action.onClick);
+      return button;
+    });
+
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "secondary-button";
+    cancel.textContent = "キャンセル";
+    cancel.addEventListener("click", closeChoiceModal);
+    buttons.push(cancel);
+
+    els.choiceActions.replaceChildren(...buttons);
+    els.choiceModal.hidden = false;
+  }
+
+  function closeChoiceModal() {
+    els.choiceModal.hidden = true;
+    els.choiceActions.replaceChildren();
+  }
+
+  function showToast(message, type) {
+    const toast = document.createElement("div");
+    toast.className = "toast";
+    if (type === "error") {
+      toast.classList.add("is-error");
+    }
+    toast.textContent = message;
+    els.toastArea.appendChild(toast);
+    window.setTimeout(() => {
+      toast.remove();
+    }, 4200);
+  }
+
+  function setupOptionalIcon() {
+    const candidates = ["assets/icon.svg"];
+    tryIconCandidate(candidates, 0);
+  }
+
+  function tryIconCandidate(candidates, index) {
+    if (index >= candidates.length) {
+      els.appIcon.hidden = true;
+      els.iconFallback.hidden = false;
+      return;
+    }
+    const probe = new Image();
+    probe.onload = () => {
+      const src = candidates[index];
+      els.appIcon.src = src;
+      els.appIcon.hidden = false;
+      els.iconFallback.hidden = true;
+      els.favicon.href = "assets/favicon.svg";
+      if (src.endsWith(".svg")) {
+        els.favicon.type = "image/svg+xml";
+      }
+    };
+    probe.onerror = () => tryIconCandidate(candidates, index + 1);
+    probe.src = candidates[index];
+  }
+
+  function migrateCategoriesIfNeeded() {
+    let settingsChanged = false;
+    let eventsChanged = false;
+    const normalizedCategories = normalizeCategories(state.settings.categories);
+    if (!sameCategories(state.settings.categories, normalizedCategories)) {
+      state.settings.categories = normalizedCategories;
+      settingsChanged = true;
+    }
+
+    if (!state.settings[CATEGORY_MIGRATION_FLAG]) {
+      const usedKeys = new Set(state.events.map((event) => event.color));
+      ["important", "other"].forEach((key) => {
+        if (usedKeys.has(key) && !isKnownCategoryKey(key)) {
+          state.settings.categories.push(cloneCategory(LEGACY_OPTIONAL_CATEGORIES[key]));
+          settingsChanged = true;
+        }
+      });
+
+      state.events.forEach((event) => {
+        if (event.color === "health") {
+          event.color = "exercise";
+          eventsChanged = true;
+        }
+      });
+
+      state.settings[CATEGORY_MIGRATION_FLAG] = true;
+      settingsChanged = true;
+    }
+
+    if (ensureEventsUseKnownCategories()) {
+      eventsChanged = true;
+    }
+
+    if (settingsChanged) {
+      saveSettings();
+    }
+    if (eventsChanged) {
+      saveEvents();
+    }
+  }
+
+  function ensureEventsUseKnownCategories() {
+    let changed = false;
+    const fallbackKey = firstCategoryKey();
+    state.events.forEach((event) => {
+      if (!isKnownCategoryKey(event.color)) {
+        event.color = fallbackKey;
+        changed = true;
+      }
+    });
+    return changed;
+  }
+
+  function getCategories() {
+    if (!Array.isArray(state.settings.categories) || state.settings.categories.length === 0) {
+      state.settings.categories = cloneDefaultCategories();
+    }
+    return state.settings.categories;
+  }
+
+  function normalizeCategories(value) {
+    const source = Array.isArray(value) ? value : DEFAULT_CATEGORIES;
+    const categories = [];
+    const usedKeys = new Set();
+
+    source.forEach((item) => {
+      if (!item || typeof item !== "object") {
+        return;
+      }
+      const key = typeof item.key === "string" ? item.key.trim() : "";
+      if (!CATEGORY_KEY_PATTERN.test(key) || usedKeys.has(key)) {
+        return;
+      }
+      const label = normalizeCategoryLabel(item.label) || "カテゴリ";
+      const color = normalizeHexColor(item.color) || CATEGORY_PALETTE[categories.length % CATEGORY_PALETTE.length];
+      categories.push({ key, label, color });
+      usedKeys.add(key);
+    });
+
+    if (categories.length === 0) {
+      return cloneDefaultCategories();
+    }
+    return categories.slice(0, CATEGORY_MAX_COUNT);
+  }
+
+  function sameCategories(left, right) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+      return false;
+    }
+    return left.every((category, index) => {
+      const next = right[index];
+      return next && category.key === next.key && category.label === next.label && category.color === next.color;
+    });
+  }
+
+  function cloneDefaultCategories() {
+    return DEFAULT_CATEGORIES.map(cloneCategory);
+  }
+
+  function cloneCategory(category) {
+    return {
+      key: category.key,
+      label: category.label,
+      color: category.color
+    };
+  }
+
+  function normalizeCategoryLabel(value) {
+    if (typeof value !== "string") {
+      return "";
+    }
+    return value.trim().slice(0, CATEGORY_LABEL_MAX_LENGTH);
+  }
+
+  function normalizeHexColor(value) {
+    if (typeof value !== "string" || !/^#[0-9A-Fa-f]{6}$/.test(value)) {
+      return "";
+    }
+    return value.toUpperCase();
+  }
+
+  function firstCategoryKey() {
+    const category = getCategories()[0];
+    return category ? category.key : "work";
+  }
+
+  function findCategory(key) {
+    if (typeof key !== "string") {
+      return null;
+    }
+    return getCategories().find((category) => category.key === key) || null;
+  }
+
+  function isKnownCategoryKey(key) {
+    return Boolean(findCategory(key));
+  }
+
+  function categoryLabel(key) {
+    const category = findCategory(key) || getCategories()[0];
+    return category ? category.label : "";
+  }
+
+  function categoryColor(key) {
+    const category = findCategory(key) || getCategories()[0];
+    return category ? category.color : DEFAULT_CATEGORIES[0].color;
+  }
+
+  function applyCategoryColor(element, key) {
+    const color = categoryColor(key);
+    element.style.setProperty("--category-color", color);
+    element.style.setProperty("--category-text", readableTextColor(color));
+  }
+
+  function applyRawColor(element, color) {
+    const normalizedColor = normalizeHexColor(color) || DEFAULT_CATEGORIES[0].color;
+    element.style.setProperty("--category-color", normalizedColor);
+    element.style.setProperty("--category-text", readableTextColor(normalizedColor));
+  }
+
+  function readableTextColor(color) {
+    const normalizedColor = normalizeHexColor(color);
+    if (!normalizedColor) {
+      return "#FFFFFF";
+    }
+    const red = Number.parseInt(normalizedColor.slice(1, 3), 16) / 255;
+    const green = Number.parseInt(normalizedColor.slice(3, 5), 16) / 255;
+    const blue = Number.parseInt(normalizedColor.slice(5, 7), 16) / 255;
+    const luminance =
+      0.2126 * srgbToLinear(red) +
+      0.7152 * srgbToLinear(green) +
+      0.0722 * srgbToLinear(blue);
+    return luminance > 0.58 ? "#111827" : "#FFFFFF";
+  }
+
+  function srgbToLinear(value) {
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  }
+
+  function firstUnusedCategoryColor() {
+    const usedColors = new Set(getCategories().map((category) => category.color.toUpperCase()));
+    return CATEGORY_PALETTE.find((color) => !usedColors.has(color)) || CATEGORY_PALETTE[0];
+  }
+
+  function createCategoryKey() {
+    let key = "";
+    do {
+      key = `cat_${Math.random().toString(36).slice(2, 8)}`;
+    } while (isKnownCategoryKey(key));
+    return key;
+  }
+
+  function fallbackCategoryForDelete(key) {
+    const categories = getCategories();
+    if (categories.length <= 1) {
+      return null;
+    }
+    if (categories[0].key !== key) {
+      return categories[0];
+    }
+    return categories.find((category) => category.key !== key) || null;
+  }
+
+  function cssEscape(value) {
+    if (window.CSS && typeof window.CSS.escape === "function") {
+      return window.CSS.escape(value);
+    }
+    return String(value).replace(/["\\\]]/g, "\\$&");
+  }
+
+  function loadEvents() {
+    const raw = safeReadJson(STORAGE_KEYS.events, []);
+    if (!Array.isArray(raw)) {
+      return [];
+    }
+    let changed = false;
+    const events = raw.map((item) => {
+      if (!item || typeof item !== "object" || !Object.prototype.hasOwnProperty.call(item, "reminder")) {
+        changed = true;
+      }
+      const event = normalizeEvent(item);
+      if (event && item && typeof item === "object" && item.reminder !== event.reminder) {
+        changed = true;
+      }
+      return event;
+    }).filter((event) => {
+      if (!event) {
+        changed = true;
+        return false;
+      }
+      return true;
+    });
+    if (changed) {
+      saveJson(STORAGE_KEYS.events, events);
+    }
+    return events;
+  }
+
+  function normalizeEvent(item) {
+    if (!item || typeof item !== "object") {
+      return null;
+    }
+    const title = typeof item.title === "string" ? item.title.trim() : "";
+    const date = typeof item.date === "string" ? item.date : "";
+    if (!title || !isValidDateString(date)) {
+      return null;
+    }
+
+    const startTime = isValidTimeString(item.startTime) ? item.startTime : null;
+    const endTime = isValidTimeString(item.endTime) ? item.endTime : null;
+    const color = typeof item.color === "string" && item.color.trim() ? item.color.trim() : firstCategoryKey();
+
+    return {
+      id: typeof item.id === "string" && item.id ? item.id : createId("evt"),
+      title,
+      date,
+      startTime,
+      endTime: startTime && endTime && timeToMinutes(endTime) > timeToMinutes(startTime) ? endTime : null,
+      color,
+      memo: typeof item.memo === "string" ? item.memo : "",
+      reminder: normalizeReminderValue(
+        Object.prototype.hasOwnProperty.call(item, "reminder") ? item.reminder : undefined,
+        DEFAULT_REMINDER_MINUTES
+      ),
+      recurrence: normalizeRecurrence(item.recurrence, date),
+      exceptions: sanitizeExceptions(item.exceptions)
+    };
+  }
+
+  function normalizeRecurrence(recurrence, dateStr) {
+    if (!recurrence || typeof recurrence !== "object" || !VALID_RECURRENCES.has(recurrence.freq)) {
+      return null;
+    }
+    const date = parseDate(dateStr);
+    if (!date) {
+      return null;
+    }
+    if (recurrence.freq === "weekly") {
+      return {
+        freq: "weekly",
+        weekday: validWeekday(recurrence.weekday) ? recurrence.weekday : date.getDay()
+      };
+    }
+    if (recurrence.freq === "monthly") {
+      return {
+        freq: "monthly",
+        day: validMonthDay(recurrence.day) ? recurrence.day : date.getDate()
+      };
+    }
+    return { freq: "daily" };
+  }
+
+  function sanitizeExceptions(exceptions) {
+    if (!Array.isArray(exceptions)) {
+      return [];
+    }
+    return Array.from(new Set(exceptions.filter(isValidDateString))).sort();
+  }
+
+  function loadTodos() {
+    const raw = safeReadJson(STORAGE_KEYS.todos, []);
+    if (!Array.isArray(raw)) {
+      return [];
+    }
+    return raw.map(normalizeTodo).filter(Boolean);
+  }
+
+  function normalizeTodo(item) {
+    if (!item || typeof item !== "object") {
+      return null;
+    }
+    const title = typeof item.title === "string" ? item.title.trim() : "";
+    if (!title) {
+      return null;
+    }
+    return {
+      id: typeof item.id === "string" && item.id ? item.id : createId("todo"),
+      title,
+      done: Boolean(item.done),
+      createdAt: typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString()
+    };
+  }
+
+  function defaultSettings() {
+    return {
+      notifications: false,
+      defaultReminder: DEFAULT_REMINDER_MINUTES,
+      notified: {},
+      categories: cloneDefaultCategories(),
+      [CATEGORY_MIGRATION_FLAG]: false
+    };
+  }
+
+  function loadSettings() {
+    const raw = safeReadJson(STORAGE_KEYS.settings, defaultSettings());
+    const settings = defaultSettings();
+    if (!raw || typeof raw !== "object") {
+      return settings;
+    }
+    let changed = false;
+    settings.notifications = Boolean(raw.notifications);
+    if (!Object.prototype.hasOwnProperty.call(raw, "defaultReminder")) {
+      changed = true;
+    }
+    settings.defaultReminder = normalizeReminderValue(
+      Object.prototype.hasOwnProperty.call(raw, "defaultReminder") ? raw.defaultReminder : undefined,
+      DEFAULT_REMINDER_MINUTES
+    );
+    if (raw.defaultReminder !== settings.defaultReminder) {
+      changed = true;
+    }
+    settings.categories = normalizeCategories(raw.categories);
+    settings[CATEGORY_MIGRATION_FLAG] = Boolean(raw[CATEGORY_MIGRATION_FLAG]);
+    if (raw.notified && typeof raw.notified === "object" && !Array.isArray(raw.notified)) {
+      Object.keys(raw.notified).forEach((key) => {
+        if (typeof raw.notified[key] === "string") {
+          settings.notified[key] = raw.notified[key];
+        }
+      });
+    }
+    if (changed) {
+      saveJson(STORAGE_KEYS.settings, settings);
+    }
+    return settings;
+  }
+
+  function safeReadJson(key, fallback) {
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) {
+        return fallback;
+      }
+      return JSON.parse(raw);
+    } catch (error) {
+      return fallback;
+    }
+  }
+
+  function saveEvents() {
+    saveJson(STORAGE_KEYS.events, state.events);
+  }
+
+  function saveTodos() {
+    saveJson(STORAGE_KEYS.todos, state.todos);
+  }
+
+  function saveSettings() {
+    saveJson(STORAGE_KEYS.settings, state.settings);
+  }
+
+  function saveJson(key, value) {
+    try {
+      window.localStorage.setItem(key, JSON.stringify(value));
+    } catch (error) {
+      showToast("データを保存できませんでした", "error");
+    }
+  }
+
+  function getHolidayName(dateStr) {
+    const holidays = window.JP_HOLIDAYS;
+    if (!holidays || typeof holidays !== "object") {
+      return "";
+    }
+    if (!Object.prototype.hasOwnProperty.call(holidays, dateStr)) {
+      return "";
+    }
+    return String(holidays[dateStr] || "祝日");
+  }
+
+  function defaultDateForAdd() {
+    const todayStr = formatDate(new Date());
+    if (state.view === "month" && isValidDateString(state.selectedDate)) {
+      return state.selectedDate;
+    }
+    if (state.view === "week") {
+      const weekStartStr = formatDate(state.currentWeekStart);
+      const weekEndStr = formatDate(addDays(state.currentWeekStart, 6));
+      if (todayStr >= weekStartStr && todayStr <= weekEndStr) {
+        return todayStr;
+      }
+      return weekStartStr;
+    }
+    return todayStr;
+  }
+
+  function formatWeekRange(start, end) {
+    const startYear = start.getFullYear();
+    const endYear = end.getFullYear();
+    if (startYear === endYear) {
+      return `${startYear}年${start.getMonth() + 1}/${start.getDate()} - ${end.getMonth() + 1}/${end.getDate()}`;
+    }
+    return `${startYear}年${start.getMonth() + 1}/${start.getDate()} - ${endYear}年${end.getMonth() + 1}/${end.getDate()}`;
+  }
+
+  function formatLongDate(dateOrString) {
+    const date = typeof dateOrString === "string" ? parseDate(dateOrString) : dateOrString;
+    if (!date) {
+      return "";
+    }
+    return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日(${WEEKDAYS[date.getDay()]})`;
+  }
+
+  function startOfMonth(date) {
+    return new Date(date.getFullYear(), date.getMonth(), 1);
+  }
+
+  function startOfWeek(date) {
+    const base = stripTime(date);
+    base.setDate(base.getDate() - base.getDay());
+    return base;
+  }
+
+  function addDays(date, days) {
+    const next = stripTime(date);
+    next.setDate(next.getDate() + days);
+    return next;
+  }
+
+  function addMonths(date, months) {
+    return new Date(date.getFullYear(), date.getMonth() + months, 1);
+  }
+
+  function stripTime(date) {
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  }
+
+  function formatDate(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  function parseDate(value) {
+    if (typeof value !== "string") {
+      return null;
+    }
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (!match) {
+      return null;
+    }
+    const year = Number(match[1]);
+    const month = Number(match[2]) - 1;
+    const day = Number(match[3]);
+    const date = new Date(year, month, day);
+    return formatDate(date) === value ? date : null;
+  }
+
+  function isValidDateString(value) {
+    return Boolean(parseDate(value));
+  }
+
+  function isValidTimeString(value) {
+    return typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+  }
+
+  function timeToMinutes(value) {
+    if (!isValidTimeString(value)) {
+      return 0;
+    }
+    const parts = value.split(":");
+    return Number(parts[0]) * 60 + Number(parts[1]);
+  }
+
+  function compareDateStrings(a, b) {
+    if (a === b) {
+      return 0;
+    }
+    return a < b ? -1 : 1;
+  }
+
+  function daysInMonth(year, monthIndex) {
+    return new Date(year, monthIndex + 1, 0).getDate();
+  }
+
+  function validWeekday(value) {
+    return Number.isInteger(value) && value >= 0 && value <= 6;
+  }
+
+  function validMonthDay(value) {
+    return Number.isInteger(value) && value >= 1 && value <= 31;
+  }
+
+  function createId(prefix) {
+    const random = Math.random().toString(36).slice(2, 8);
+    return `${prefix}_${Date.now().toString(36)}_${random}`;
+  }
+
+  function byId(id) {
+    return document.getElementById(id);
+  }
+})();
