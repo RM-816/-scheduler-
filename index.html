@@ -176,7 +176,12 @@
           <h2 id="selectedDayTitle"></h2>
           <p id="selectedDayHoliday" class="muted-text"></p>
         </div>
-        <button id="closeDayPanel" class="icon-button" type="button" aria-label="閉じる">×</button>
+        <div class="sheet-actions">
+          <button id="shareDayButton" class="icon-button" type="button" aria-label="この日の予定を共有" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7"/><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/></svg>
+          </button>
+          <button id="closeDayPanel" class="icon-button" type="button" aria-label="閉じる">×</button>
+        </div>
       </div>
       <div id="selectedDayEvents" class="day-events"></div>
       <button id="addForDayButton" class="primary-button full-button" type="button">この日に追加</button>
@@ -263,6 +268,7 @@
         <p id="formError" class="form-error" role="alert"></p>
         <div class="modal-actions">
           <button id="deleteEventButton" class="danger-outline-button" type="button" hidden>削除</button>
+          <button id="shareEventButton" class="secondary-button" type="button" hidden>共有</button>
           <span class="action-spacer"></span>
           <button id="cancelEventButton" class="secondary-button" type="button">キャンセル</button>
           <button class="primary-button" type="submit">保存</button>
@@ -276,6 +282,41 @@
       <h2 id="choiceTitle"></h2>
       <p id="choiceMessage" class="muted-text"></p>
       <div id="choiceActions" class="choice-actions"></div>
+    </section>
+  </div>
+
+  <div id="sharedEventsModal" class="modal-backdrop" hidden>
+    <section class="modal-card shared-events-card" aria-labelledby="sharedEventsTitle" role="dialog" aria-modal="true">
+      <div class="sheet-header">
+        <div>
+          <h2 id="sharedEventsTitle">共有された予定</h2>
+          <p id="sharedEventsSummary" class="muted-text"></p>
+        </div>
+        <button id="closeSharedEventsModal" class="icon-button" type="button" aria-label="閉じる">×</button>
+      </div>
+      <div id="sharedEventsList" class="shared-events-list"></div>
+      <div class="modal-actions">
+        <span class="action-spacer"></span>
+        <button id="cancelSharedEventsButton" class="secondary-button" type="button">キャンセル</button>
+        <button id="addSharedEventsButton" class="primary-button" type="button">0件を追加</button>
+      </div>
+    </section>
+  </div>
+
+  <div id="shareLinkModal" class="modal-backdrop" hidden>
+    <section class="modal-card share-link-card" aria-labelledby="shareLinkTitle" role="dialog" aria-modal="true">
+      <div class="sheet-header">
+        <div>
+          <h2 id="shareLinkTitle">共有リンク</h2>
+          <p class="muted-text">リンクを選択してコピーできます。</p>
+        </div>
+        <button id="closeShareLinkModal" class="icon-button" type="button" aria-label="閉じる">×</button>
+      </div>
+      <textarea id="shareLinkText" class="share-link-text" rows="4" readonly></textarea>
+      <div class="modal-actions">
+        <span class="action-spacer"></span>
+        <button id="closeShareLinkButton" class="primary-button" type="button">閉じる</button>
+      </div>
     </section>
   </div>
 

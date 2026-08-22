@@ -196,6 +196,16 @@ body[data-view="month"] #monthView {
   line-height: 1;
 }
 
+.icon-button svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .icon-button:hover,
 .secondary-button:hover {
   background: var(--surface-soft);
@@ -1228,6 +1238,12 @@ body[data-view="settings"] .add-fab {
   margin-bottom: 14px;
 }
 
+.sheet-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
 .sheet-header h2,
 .choice-card h2 {
   margin: 0;
@@ -1422,6 +1438,7 @@ body[data-view="settings"] .add-fab {
 .modal-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 2px;
 }
@@ -1435,6 +1452,86 @@ body[data-view="settings"] .add-fab {
   flex-direction: column;
   gap: 8px;
   margin-top: 16px;
+}
+
+.shared-events-card,
+.share-link-card {
+  width: min(100%, 430px);
+}
+
+.shared-events-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.shared-event-row {
+  display: grid;
+  grid-template-columns: 22px 10px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #FFFFFF;
+}
+
+.shared-event-row input {
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+}
+
+.shared-event-row.is-duplicate {
+  background: #F8FAFC;
+}
+
+.shared-event-dot {
+  margin-top: 5px;
+}
+
+.shared-event-content,
+.shared-event-title,
+.shared-event-meta {
+  display: block;
+  min-width: 0;
+}
+
+.shared-event-title {
+  overflow-wrap: anywhere;
+  font-weight: 800;
+}
+
+.shared-event-meta {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.shared-event-status {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: #FEF3C7;
+  color: #92400E;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.share-link-text {
+  width: 100%;
+  min-height: 116px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .visually-hidden {

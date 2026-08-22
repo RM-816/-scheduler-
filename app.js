@@ -32,6 +32,14 @@
   const REMINDER_CUSTOM_MAX_MINUTES = 10080;
   const REMINDER_PRESET_VALUES = [0, 5, 10, 15, 30, 60, 120, 1440];
   const VALID_TIME_MODES = new Set(["timed", "allday", "am", "pm"]);
+  const SHARE_VERSION = 1;
+  const SHARE_HASH_PREFIX = "#share=";
+  const SHARE_MAX_EVENTS = 30;
+  const SHARE_MAX_HASH_LENGTH = 60000;
+  const SHARE_TITLE_MAX_LENGTH = 80;
+  const SHARE_MEMO_MAX_LENGTH = 300;
+  const SHARE_CATEGORY_LABEL_MAX_LENGTH = CATEGORY_LABEL_MAX_LENGTH;
+  const SHARE_WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
   const PERIOD_TIME_MODE_RANGES = {
     am: { startTime: "09:00", endTime: "12:00" },
     pm: { startTime: "13:00", endTime: "17:00" }
@@ -60,7 +68,8 @@
     voiceListening: false,
     voiceStopping: false,
     voiceBaseText: "",
-    voiceFinalText: ""
+    voiceFinalText: "",
+    pendingSharedEvents: []
   };
 
   const els = {};
@@ -80,6 +89,7 @@
     bindEvents();
     renderAll();
     startNotificationTimer();
+    handleIncomingShareHash();
   }
 
   function cacheElements() {
@@ -133,6 +143,7 @@
     els.selectedDayEvents = byId("selectedDayEvents");
     els.closeDayPanel = byId("closeDayPanel");
     els.addForDayButton = byId("addForDayButton");
+    els.shareDayButton = byId("shareDayButton");
 
     els.eventModal = byId("eventModal");
     els.eventModalTitle = byId("eventModalTitle");
@@ -154,6 +165,7 @@
     els.eventMemo = byId("eventMemo");
     els.formError = byId("formError");
     els.deleteEventButton = byId("deleteEventButton");
+    els.shareEventButton = byId("shareEventButton");
     els.cancelEventButton = byId("cancelEventButton");
     els.colorOptions = byId("colorOptions");
     els.openCategoryEditorButton = byId("openCategoryEditorButton");
@@ -166,6 +178,17 @@
     els.choiceTitle = byId("choiceTitle");
     els.choiceMessage = byId("choiceMessage");
     els.choiceActions = byId("choiceActions");
+
+    els.shareLinkModal = byId("shareLinkModal");
+    els.shareLinkText = byId("shareLinkText");
+    els.closeShareLinkModal = byId("closeShareLinkModal");
+    els.closeShareLinkButton = byId("closeShareLinkButton");
+    els.sharedEventsModal = byId("sharedEventsModal");
+    els.sharedEventsList = byId("sharedEventsList");
+    els.sharedEventsSummary = byId("sharedEventsSummary");
+    els.addSharedEventsButton = byId("addSharedEventsButton");
+    els.cancelSharedEventsButton = byId("cancelSharedEventsButton");
+    els.closeSharedEventsModal = byId("closeSharedEventsModal");
 
     els.importModal = byId("importModal");
     els.closeImportModal = byId("closeImportModal");
@@ -235,6 +258,7 @@
     els.addForDayButton.addEventListener("click", () => {
       openEventForm({ date: state.selectedDate });
     });
+    els.shareDayButton.addEventListener("click", handleShareSelectedDay);
 
     els.closeEventModal.addEventListener("click", closeEventModal);
     els.cancelEventButton.addEventListener("click", closeEventModal);
@@ -245,6 +269,7 @@
     });
     els.eventForm.addEventListener("submit", handleEventSubmit);
     els.deleteEventButton.addEventListener("click", handleDeleteEvent);
+    els.shareEventButton.addEventListener("click", handleShareCurrentEvent);
     els.colorOptions.addEventListener("click", handleEventCategoryClick);
     els.openCategoryEditorButton.addEventListener("click", openEventCategoryEditor);
     els.closeCategoryEditorButton.addEventListener("click", closeEventCategoryEditor);
@@ -281,6 +306,23 @@
       }
     });
 
+    els.closeShareLinkModal.addEventListener("click", closeShareLinkModal);
+    els.closeShareLinkButton.addEventListener("click", closeShareLinkModal);
+    els.shareLinkModal.addEventListener("click", (event) => {
+      if (event.target === els.shareLinkModal) {
+        closeShareLinkModal();
+      }
+    });
+    els.cancelSharedEventsButton.addEventListener("click", cancelSharedEvents);
+    els.closeSharedEventsModal.addEventListener("click", cancelSharedEvents);
+    els.addSharedEventsButton.addEventListener("click", addCheckedSharedEvents);
+    els.sharedEventsList.addEventListener("change", updateSharedEventsAddButton);
+    els.sharedEventsModal.addEventListener("click", (event) => {
+      if (event.target === els.sharedEventsModal) {
+        cancelSharedEvents();
+      }
+    });
+
     els.closeImportModal.addEventListener("click", closeImportModal);
     els.importModal.addEventListener("click", (event) => {
       if (event.target === els.importModal) {
@@ -301,6 +343,10 @@
       }
       if (!els.eventCategoryEditorModal.hidden) {
         closeEventCategoryEditor();
+      } else if (!els.sharedEventsModal.hidden) {
+        cancelSharedEvents();
+      } else if (!els.shareLinkModal.hidden) {
+        closeShareLinkModal();
       } else if (!els.choiceModal.hidden) {
         closeChoiceModal();
       } else if (!els.importModal.hidden) {
@@ -1294,6 +1340,7 @@
 
     els.selectedDayTitle.textContent = formatLongDate(dateStr);
     els.selectedDayHoliday.textContent = holidayName || "";
+    els.shareDayButton.disabled = events.length === 0;
 
     if (events.length === 0) {
       const empty = document.createElement("div");
@@ -1352,6 +1399,7 @@
     els.eventForm.reset();
     els.formError.textContent = "";
     els.deleteEventButton.hidden = !existing;
+    els.shareEventButton.hidden = !existing;
     els.eventModalTitle.textContent = existing ? "予定を編集" : "予定を追加";
     renderEventColorOptions();
 
@@ -1419,6 +1467,492 @@
     els.eventModal.hidden = true;
     state.editing = null;
     els.formError.textContent = "";
+  }
+
+  function handleShareCurrentEvent() {
+    if (!state.editing) {
+      return;
+    }
+    const eventData = readEventForm();
+    if (!eventData) {
+      return;
+    }
+    shareEvents([eventData], `「${eventData.title}」の予定`);
+  }
+
+  function handleShareSelectedDay() {
+    const dateStr = state.selectedDate || formatDate(new Date());
+    const events = getOccurrencesForDate(dateStr).sort(sortOccurrences);
+    if (events.length === 0) {
+      return;
+    }
+    shareEvents(events, `「${sharedDateLabel(dateStr)}」の予定`);
+  }
+
+  async function shareEvents(events, text) {
+    if (!Array.isArray(events) || events.length === 0) {
+      return;
+    }
+    if (events.length > SHARE_MAX_EVENTS) {
+      showToast("共有できる予定は30件までです", "error");
+      return;
+    }
+
+    let url = "";
+    try {
+      url = createShareUrl(events);
+    } catch (error) {
+      showToast("共有リンクを作成できませんでした", "error");
+      return;
+    }
+
+    if (navigator.share && typeof navigator.share === "function") {
+      try {
+        await navigator.share({
+          title: "予定の共有",
+          text,
+          url
+        });
+        return;
+      } catch (error) {
+        if (error && error.name === "AbortError") {
+          return;
+        }
+      }
+    }
+
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      try {
+        await navigator.clipboard.writeText(url);
+        showToast("共有リンクをコピーしました");
+        return;
+      } catch (error) {
+        // Fall through to the selectable link modal.
+      }
+    }
+
+    openShareLinkModal(url);
+  }
+
+  function createShareUrl(events) {
+    const payload = {
+      v: SHARE_VERSION,
+      e: events.map(createSharedEventRecord)
+    };
+    const encoded = utf8ToBase64Url(JSON.stringify(payload));
+    // The schedule payload is stored in location.hash, so it is not sent to the server in the HTTP request.
+    return `${pageBaseUrl()}${SHARE_HASH_PREFIX}${encoded}`;
+  }
+
+  function createSharedEventRecord(event) {
+    const category = findCategory(event.color) || getCategories()[0];
+    const record = {
+      t: event.title,
+      d: event.occurrenceDate || event.date,
+      c: category ? category.key : firstCategoryKey(),
+      cl: category ? category.label : "",
+      co: category ? category.color : categoryColor(firstCategoryKey()),
+      r: Object.prototype.hasOwnProperty.call(event, "reminder") ? event.reminder : null,
+      tm: normalizeTimeMode(event.timeMode)
+    };
+    if (event.startTime) {
+      record.s = event.startTime;
+    }
+    if (event.endTime) {
+      record.en = event.endTime;
+    }
+    if (event.memo) {
+      record.m = event.memo;
+    }
+    if (event.recurrence) {
+      record.rc = cloneSharedRecurrence(event.recurrence);
+    }
+    return record;
+  }
+
+  function cloneSharedRecurrence(recurrence) {
+    return JSON.parse(JSON.stringify(recurrence));
+  }
+
+  function openShareLinkModal(url) {
+    els.shareLinkText.value = url;
+    els.shareLinkModal.hidden = false;
+    window.setTimeout(() => {
+      els.shareLinkText.focus();
+      els.shareLinkText.select();
+    }, 0);
+  }
+
+  function closeShareLinkModal() {
+    els.shareLinkModal.hidden = true;
+    els.shareLinkText.value = "";
+  }
+
+  function handleIncomingShareHash() {
+    if (!location.hash || !location.hash.startsWith(SHARE_HASH_PREFIX)) {
+      return;
+    }
+
+    try {
+      const records = parseSharedPayload(location.hash.slice(SHARE_HASH_PREFIX.length));
+      state.pendingSharedEvents = records.map(createSharedImportEntry);
+      renderSharedEventsModal();
+      els.sharedEventsModal.hidden = false;
+    } catch (error) {
+      removeShareHash();
+      showToast("リンクが正しくありません", "error");
+    }
+  }
+
+  function parseSharedPayload(encoded) {
+    if (
+      typeof encoded !== "string" ||
+      encoded.length === 0 ||
+      encoded.length > SHARE_MAX_HASH_LENGTH ||
+      !/^[A-Za-z0-9_-]+$/.test(encoded) ||
+      encoded.length % 4 === 1
+    ) {
+      throw new Error("invalid share hash");
+    }
+
+    const payload = JSON.parse(base64UrlToUtf8(encoded));
+    if (!payload || typeof payload !== "object" || Array.isArray(payload) || payload.v !== SHARE_VERSION) {
+      throw new Error("invalid share payload");
+    }
+    if (!Array.isArray(payload.e) || payload.e.length === 0 || payload.e.length > SHARE_MAX_EVENTS) {
+      throw new Error("invalid shared event count");
+    }
+    return payload.e.map(validateSharedEventRecord);
+  }
+
+  function validateSharedEventRecord(item) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error("invalid shared event");
+    }
+
+    const title = readSharedString(item.t, SHARE_TITLE_MAX_LENGTH, true);
+    const date = readSharedDate(item.d);
+    const timeMode = item.tm === undefined ? "timed" : readSharedTimeMode(item.tm);
+    const rawStartTime = readSharedOptionalTime(item.s);
+    const rawEndTime = readSharedOptionalTime(item.en);
+    if (rawEndTime && !rawStartTime) {
+      throw new Error("invalid shared end time");
+    }
+    if (rawStartTime && rawEndTime && timeToMinutes(rawEndTime) <= timeToMinutes(rawStartTime)) {
+      throw new Error("invalid shared time range");
+    }
+    if (timeMode === "allday" && (rawStartTime || rawEndTime)) {
+      throw new Error("invalid all-day time range");
+    }
+
+    const timeRange = eventTimesForMode(timeMode, rawStartTime, rawEndTime);
+    const startTime = timeRange.startTime;
+    const endTime = timeRange.endTime;
+    const reminder = readSharedReminder(item.r);
+
+    return {
+      title,
+      date,
+      timeMode,
+      startTime,
+      endTime,
+      sourceCategoryKey: readSharedCategoryKey(item.c),
+      sourceCategoryLabel: readSharedCategoryLabel(item.cl),
+      sourceCategoryColor: readSharedCategoryColor(item.co),
+      memo: item.m === undefined || item.m === null ? "" : readSharedString(item.m, SHARE_MEMO_MAX_LENGTH, false),
+      reminder: startTime ? reminder : null,
+      recurrence: item.rc === undefined || item.rc === null ? null : validateSharedRecurrence(item.rc)
+    };
+  }
+
+  function readSharedString(value, maxLength, required) {
+    if (typeof value !== "string") {
+      throw new Error("invalid shared string");
+    }
+    const next = required ? value.trim() : value;
+    if ((required && !next) || next.length > maxLength) {
+      throw new Error("invalid shared string length");
+    }
+    return next;
+  }
+
+  function readSharedDate(value) {
+    if (typeof value !== "string" || !isValidDateString(value)) {
+      throw new Error("invalid shared date");
+    }
+    return value;
+  }
+
+  function readSharedTimeMode(value) {
+    if (typeof value !== "string" || !VALID_TIME_MODES.has(value)) {
+      throw new Error("invalid shared time mode");
+    }
+    return value;
+  }
+
+  function readSharedOptionalTime(value) {
+    if (value === undefined || value === null || value === "") {
+      return null;
+    }
+    if (!isValidTimeString(value)) {
+      throw new Error("invalid shared time");
+    }
+    return value;
+  }
+
+  function readSharedReminder(value) {
+    if (value === undefined || value === null) {
+      return null;
+    }
+    if (!Number.isInteger(value) || value < 0 || value > REMINDER_CUSTOM_MAX_MINUTES) {
+      throw new Error("invalid shared reminder");
+    }
+    return value;
+  }
+
+  function readSharedCategoryKey(value) {
+    if (value === undefined || value === null || value === "") {
+      return "";
+    }
+    if (typeof value !== "string" || !CATEGORY_KEY_PATTERN.test(value)) {
+      throw new Error("invalid shared category key");
+    }
+    return value;
+  }
+
+  function readSharedCategoryLabel(value) {
+    if (value === undefined || value === null || value === "") {
+      return "";
+    }
+    if (typeof value !== "string") {
+      throw new Error("invalid shared category label");
+    }
+    const label = value.trim();
+    if (!label || label.length > SHARE_CATEGORY_LABEL_MAX_LENGTH) {
+      throw new Error("invalid shared category label");
+    }
+    return label;
+  }
+
+  function readSharedCategoryColor(value) {
+    if (value === undefined || value === null || value === "") {
+      return "";
+    }
+    const color = normalizeHexColor(value);
+    if (!color) {
+      throw new Error("invalid shared category color");
+    }
+    return color;
+  }
+
+  function validateSharedRecurrence(recurrence) {
+    if (!recurrence || typeof recurrence !== "object" || Array.isArray(recurrence) || !VALID_RECURRENCES.has(recurrence.freq)) {
+      throw new Error("invalid shared recurrence");
+    }
+    if (recurrence.freq === "daily") {
+      return { freq: "daily" };
+    }
+    if (recurrence.freq === "weekly") {
+      if (!validWeekday(recurrence.weekday)) {
+        throw new Error("invalid shared weekly recurrence");
+      }
+      return { freq: "weekly", weekday: recurrence.weekday };
+    }
+    if (!validMonthDay(recurrence.day)) {
+      throw new Error("invalid shared monthly recurrence");
+    }
+    return { freq: "monthly", day: recurrence.day };
+  }
+
+  function createSharedImportEntry(shared) {
+    const category = resolveSharedCategory(shared.sourceCategoryKey, shared.sourceCategoryLabel);
+    const event = {
+      title: shared.title,
+      date: shared.date,
+      timeMode: shared.timeMode,
+      startTime: shared.startTime,
+      endTime: shared.endTime,
+      color: category.key,
+      memo: shared.memo,
+      reminder: shared.reminder,
+      recurrence: shared.recurrence,
+      exceptions: []
+    };
+    return {
+      event,
+      duplicate: hasDuplicateSharedEvent(event),
+      displayColor: shared.sourceCategoryColor || category.color
+    };
+  }
+
+  function resolveSharedCategory(key, label) {
+    const categories = getCategories();
+    const byKey = key ? findCategory(key) : null;
+    if (byKey) {
+      return byKey;
+    }
+    if (label) {
+      const byLabel = categories.find((category) => category.label === label);
+      if (byLabel) {
+        return byLabel;
+      }
+    }
+    return categories[0];
+  }
+
+  function hasDuplicateSharedEvent(event) {
+    return getOccurrencesForDate(event.date).some((occurrence) => (
+      occurrence.title === event.title &&
+      (occurrence.startTime || null) === (event.startTime || null)
+    ));
+  }
+
+  function renderSharedEventsModal() {
+    const rows = state.pendingSharedEvents.map((entry, index) => {
+      const row = document.createElement("label");
+      row.className = "shared-event-row";
+      row.classList.toggle("is-duplicate", entry.duplicate);
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.dataset.index = String(index);
+      checkbox.checked = !entry.duplicate;
+
+      const dot = document.createElement("span");
+      dot.className = "event-dot shared-event-dot";
+      applyRawColor(dot, entry.displayColor || categoryColor(entry.event.color));
+
+      const content = document.createElement("span");
+      content.className = "shared-event-content";
+
+      const title = document.createElement("span");
+      title.className = "shared-event-title";
+      title.textContent = sharedEventListLabel(entry.event);
+      content.appendChild(title);
+
+      const meta = document.createElement("span");
+      meta.className = "shared-event-meta";
+      meta.textContent = categoryLabel(entry.event.color);
+      content.appendChild(meta);
+
+      if (entry.duplicate) {
+        const duplicate = document.createElement("span");
+        duplicate.className = "shared-event-status";
+        duplicate.textContent = "登録済み";
+        content.appendChild(duplicate);
+      }
+
+      row.append(checkbox, dot, content);
+      return row;
+    });
+
+    els.sharedEventsSummary.textContent = `${state.pendingSharedEvents.length}件の予定が共有されています`;
+    els.sharedEventsList.replaceChildren(...rows);
+    updateSharedEventsAddButton();
+  }
+
+  function sharedEventListLabel(event) {
+    const dateLabel = sharedDateLabel(event.date);
+    const timeLabel = event.startTime || periodTimeModeLabel(event.timeMode) || (event.timeMode === "allday" ? "終日" : "時刻なし");
+    return `${dateLabel} ${timeLabel} ${event.title}`;
+  }
+
+  function sharedDateLabel(dateStr) {
+    const date = parseDate(dateStr);
+    if (!date) {
+      return dateStr;
+    }
+    return `${date.getMonth() + 1}/${date.getDate()}(${SHARE_WEEKDAYS[date.getDay()]})`;
+  }
+
+  function updateSharedEventsAddButton() {
+    const count = selectedSharedEventIndexes().length;
+    els.addSharedEventsButton.textContent = `${count}件を追加`;
+    els.addSharedEventsButton.disabled = count === 0;
+  }
+
+  function selectedSharedEventIndexes() {
+    return Array.from(els.sharedEventsList.querySelectorAll("input[type=\"checkbox\"]"))
+      .filter((checkbox) => checkbox.checked)
+      .map((checkbox) => Number(checkbox.dataset.index))
+      .filter((index) => Number.isInteger(index) && index >= 0 && index < state.pendingSharedEvents.length);
+  }
+
+  function addCheckedSharedEvents() {
+    const indexes = selectedSharedEventIndexes();
+    if (indexes.length === 0) {
+      return;
+    }
+
+    const additions = indexes.map((index) => ({
+      id: createId("evt"),
+      ...state.pendingSharedEvents[index].event,
+      exceptions: []
+    }));
+    state.events.push(...additions);
+    saveEvents();
+
+    const firstDate = parseDate(additions[0].date);
+    if (firstDate) {
+      state.selectedDate = additions[0].date;
+      state.currentMonth = startOfMonth(firstDate);
+      state.currentWeekStart = startOfWeek(firstDate);
+    }
+
+    closeSharedEventsModal();
+    removeShareHash();
+    renderAll();
+    if (!els.dayPanelBackdrop.hidden) {
+      renderDayPanel();
+    }
+    showToast(`${additions.length}件を追加しました`);
+  }
+
+  function cancelSharedEvents() {
+    closeSharedEventsModal();
+    removeShareHash();
+  }
+
+  function closeSharedEventsModal() {
+    els.sharedEventsModal.hidden = true;
+    state.pendingSharedEvents = [];
+    els.sharedEventsList.replaceChildren();
+    els.sharedEventsSummary.textContent = "";
+  }
+
+  function removeShareHash() {
+    if (!location.hash || !location.hash.startsWith(SHARE_HASH_PREFIX)) {
+      return;
+    }
+    try {
+      window.history.replaceState(null, "", pageBaseUrl());
+    } catch (error) {
+      location.hash = "";
+    }
+  }
+
+  function pageBaseUrl() {
+    if (location.origin && location.origin !== "null") {
+      return `${location.origin}${location.pathname}`;
+    }
+    return location.href.split("#")[0].split("?")[0];
+  }
+
+  function utf8ToBase64Url(value) {
+    const binary = encodeURIComponent(value).replace(/%([0-9A-F]{2})/g, (match, hex) => (
+      String.fromCharCode(Number.parseInt(hex, 16))
+    ));
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  }
+
+  function base64UrlToUtf8(value) {
+    const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    const binary = atob(padded);
+    const encoded = Array.from(binary, (character) => (
+      `%${character.charCodeAt(0).toString(16).padStart(2, "0")}`
+    )).join("");
+    return decodeURIComponent(encoded);
   }
 
   function handleEventSubmit(event) {
