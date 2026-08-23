@@ -9,6 +9,7 @@
 - 写真OCRまたは貼り付けテキストから予定候補を一括取込
 - 月表示・週表示のカレンダー
 - 予定ごとのリマインド通知
+- LINE公式アカウントからのリマインド通知
 - 予定単位・日付単位の共有リンク作成
 - 同期コード方式の端末間同期
 - カテゴリの名前・色の編集
@@ -43,6 +44,7 @@ LINE Developers では LINEログインチャネルを作成し、チャネル�
 - LINEミニアプリ対応: `line-config.js` / `line.js`
 - Tesseract.jsローカル同梱
 - 同期API: `api/sync.js` (Vercel Node serverless)
+- LINE通知API: `api/line-link.js` / `api/line-push.js`
 - データ保存: ブラウザの `localStorage`
 - 同期ストレージ: Upstash Redis REST API
 
@@ -57,6 +59,31 @@ Vercelの環境変数には、次のどちらかの組み合わせを設定し�
 
 どちらも未設定の場合、`/api/sync` は `503 {"error":"storage_not_configured"}` を返し、アプリ側では同期ボタンが無効になります。
 
+## フェーズB: LINEリマインド通知
+
+LINE通知は、LIFF内でログイン中のLINEユーザーと同期グループを `/api/line-link` で紐付け、cronから `/api/line-push` を5分間隔で呼び出して送信します。予定データは同期ストレージの `sync:{id}` を参照するため、先に「端末間の同期」を開始してください。
+
+追加で必要なVercel環境変数:
+
+- `LINE_CHANNEL_ACCESS_TOKEN`: Messaging APIの長期チャネルアクセストークン
+- `CRON_SECRET`: cron呼び出し保護用の任意の長い文字列
+
+Upstash Redis RESTの環境変数は同期機能と同じものを使います。LINE通知API側の設定が不足している場合、対象APIは `503 {"error":"line_not_configured"}` を返し、アプリ側では「LINE通知は現在準備中です」と表示します。
+
+cronはQStash、Vercel Cron、GitHub Actionsなどから5分間隔で次のURLを叩いてください。
+
+```text
+https://<your-domain>/api/line-push?key=<CRON_SECRET>
+```
+
+QStashのcron例:
+
+```text
+*/5 * * * *  GET https://<your-domain>/api/line-push?key=<CRON_SECRET>
+```
+
+通知を受け取るには、ユーザーがLINE公式アカウントを友だち追加している必要があります。友だち未追加などでMessaging APIのpushが4xxを返した場合でも、cron処理はほかのユーザーに対して継続します。
+
 ## ディレクトリ構成
 
 ```text
@@ -66,7 +93,9 @@ Vercelの環境変数には、次のどちらかの組み合わせを設定し�
 ├── line-config.js
 ├── line.js
 ├── api/
-│   └── sync.js
+│   ├── sync.js
+│   ├── line-link.js
+│   └── line-push.js
 ├── styles.css
 ├── nlp.js
 ├── ocr.js

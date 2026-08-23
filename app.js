@@ -46,6 +46,7 @@
   const SYNC_HASH_PREFIX = "#sync=";
   const SYNC_QUERY_PARAM = "sync";
   const SYNC_API_PATH = "/api/sync";
+  const LINE_LINK_API_PATH = "/api/line-link";
   const SYNC_DEBOUNCE_MS = 2500;
   const SYNC_INTERVAL_MS = 60000;
   const SYNC_PUT_MAX_ATTEMPTS = 3;
@@ -113,7 +114,13 @@
     initialized: false,
     enabled: false,
     inClient: false,
-    profileName: null
+    profileName: null,
+    notificationChecked: false,
+    notificationLinked: false,
+    notificationSyncIdPrefix: "",
+    notificationBusy: false,
+    notificationUnavailable: false,
+    notificationError: ""
   };
   const calendarSlideTimers = new WeakMap();
 
@@ -180,6 +187,15 @@
     els.defaultReminderCustom = byId("defaultReminderCustom");
     els.lineIntegrationRow = byId("lineIntegrationRow");
     els.lineIntegrationStatus = byId("lineIntegrationStatus");
+    els.lineNotificationSection = byId("lineNotificationSection");
+    els.lineNotificationStatus = byId("lineNotificationStatus");
+    els.lineNotificationDescription = byId("lineNotificationDescription");
+    els.lineNotificationNote = byId("lineNotificationNote");
+    els.lineNotificationLiffUrl = byId("lineNotificationLiffUrl");
+    els.enableLineNotificationButton = byId("enableLineNotificationButton");
+    els.unlinkLineNotificationButton = byId("unlinkLineNotificationButton");
+    els.copyLineNotificationUrlButton = byId("copyLineNotificationUrlButton");
+    els.shareLineNotificationUrlButton = byId("shareLineNotificationUrlButton");
     els.categorySettingsList = byId("categorySettingsList");
     els.addCategoryButton = byId("addCategoryButton");
     els.clearDataButton = byId("clearDataButton");
@@ -394,6 +410,10 @@
     els.joinSyncCodeButton.addEventListener("click", openJoinSyncCodeModal);
     els.addSyncDeviceButton.addEventListener("click", openSyncLinkModal);
     els.disconnectSyncButton.addEventListener("click", handleDisconnectSync);
+    els.enableLineNotificationButton.addEventListener("click", handleEnableLineNotification);
+    els.unlinkLineNotificationButton.addEventListener("click", handleUnlinkLineNotification);
+    els.copyLineNotificationUrlButton.addEventListener("click", copyLineNotificationLiffUrl);
+    els.shareLineNotificationUrlButton.addEventListener("click", shareLineNotificationLiffUrl);
 
     els.closeHelpModal.addEventListener("click", closeHelpModal);
     els.helpModal.addEventListener("click", (event) => {
@@ -1154,7 +1174,11 @@
     }
 
     renderLineIntegrationSettings();
+    renderLineNotificationSettings();
     updateSyncLinkShareButton();
+    if (lineRuntime.inClient) {
+      void refreshLineNotificationStatus();
+    }
   }
 
   function renderLineIntegrationSettings() {
@@ -1167,6 +1191,279 @@
     }
     const profileSuffix = lineRuntime.profileName ? `（${lineRuntime.profileName}）` : "";
     els.lineIntegrationStatus.textContent = `LINE内で実行中${profileSuffix}`;
+  }
+
+  function renderLineNotificationSettings() {
+    if (!els.lineNotificationSection || !els.lineNotificationStatus) {
+      return;
+    }
+
+    const syncConfigured = Boolean(state.syncState && state.syncState.id && state.syncState.key);
+    const liffUrl = lineNotificationLiffUrl();
+    const showLiffUrl = Boolean(!lineRuntime.inClient && liffUrl);
+
+    els.lineNotificationLiffUrl.hidden = !showLiffUrl;
+    els.lineNotificationLiffUrl.textContent = showLiffUrl ? liffUrl : "";
+    els.copyLineNotificationUrlButton.hidden = !showLiffUrl;
+    els.shareLineNotificationUrlButton.hidden = !showLiffUrl;
+    els.shareLineNotificationUrlButton.disabled = !canUseNavigatorShare();
+    els.enableLineNotificationButton.hidden = true;
+    els.unlinkLineNotificationButton.hidden = true;
+    els.enableLineNotificationButton.disabled = true;
+    els.unlinkLineNotificationButton.disabled = true;
+    els.lineNotificationNote.hidden = true;
+    els.lineNotificationNote.textContent = "";
+
+    if (!liffUrl) {
+      setLineNotificationText(
+        "LINE通知は現在準備中です",
+        "LIFF IDを設定すると、LINEアプリ内から通知を有効化できます。"
+      );
+      return;
+    }
+
+    if (!lineRuntime.initialized) {
+      setLineNotificationText("LINE通知の状態を確認中です", "LIFFの初期化が終わると設定できます。");
+      return;
+    }
+
+    if (!lineRuntime.inClient) {
+      setLineNotificationText(
+        "LINEアプリ内で開くと設定できます",
+        "下のLIFF URLをLINEで開いてから、通知を有効にしてください。"
+      );
+      return;
+    }
+
+    if (!syncConfigured) {
+      setLineNotificationText(
+        "先に『端末間の同期』を開始してください",
+        "LINE通知は同期グループに保存された予定をもとに送信します。"
+      );
+      return;
+    }
+
+    if (lineRuntime.notificationUnavailable) {
+      setLineNotificationText("LINE通知は現在準備中です", "サーバー側のLINE通知設定が完了すると利用できます。");
+      return;
+    }
+
+    if (lineRuntime.notificationBusy) {
+      setLineNotificationText("LINE通知を更新中です", "しばらくお待ちください。");
+      return;
+    }
+
+    if (lineRuntime.notificationError) {
+      setLineNotificationText(lineRuntime.notificationError, "通信状態を確認して、もう一度お試しください。");
+      els.enableLineNotificationButton.hidden = false;
+      els.enableLineNotificationButton.disabled = false;
+      return;
+    }
+
+    if (!lineRuntime.notificationChecked) {
+      setLineNotificationText("LINE通知の状態を確認中です", "状態確認後に有効化できます。");
+      return;
+    }
+
+    if (lineRuntime.notificationLinked) {
+      const prefix = lineRuntime.notificationSyncIdPrefix
+        ? `（同期コード ${lineRuntime.notificationSyncIdPrefix.toUpperCase()}）`
+        : "";
+      setLineNotificationText(`LINE通知: ON${prefix}`, "リマインド時刻になるとLINE公式アカウントから通知します。");
+      els.unlinkLineNotificationButton.hidden = false;
+      els.unlinkLineNotificationButton.disabled = false;
+      els.lineNotificationNote.hidden = false;
+      els.lineNotificationNote.textContent = "公式アカウントからの通知を受け取るには友だち追加が必要です。";
+      return;
+    }
+
+    setLineNotificationText("LINE通知: OFF", "この端末の同期グループをLINEアカウントに紐付けると有効になります。");
+    els.enableLineNotificationButton.hidden = false;
+    els.enableLineNotificationButton.disabled = false;
+  }
+
+  function setLineNotificationText(status, description) {
+    els.lineNotificationStatus.textContent = status;
+    els.lineNotificationDescription.textContent = description || "";
+  }
+
+  async function refreshLineNotificationStatus() {
+    if (!lineRuntime.inClient || lineRuntime.notificationBusy) {
+      return;
+    }
+    lineRuntime.notificationBusy = true;
+    lineRuntime.notificationError = "";
+    renderLineNotificationSettings();
+    try {
+      const payload = await lineLinkApiRequest({ action: "status" });
+      lineRuntime.notificationChecked = true;
+      lineRuntime.notificationLinked = Boolean(payload && payload.linked);
+      lineRuntime.notificationSyncIdPrefix = payload && typeof payload.syncIdPrefix === "string"
+        ? payload.syncIdPrefix
+        : "";
+      lineRuntime.notificationUnavailable = false;
+    } catch (error) {
+      handleLineNotificationError(error, "LINE通知の状態を確認できませんでした");
+    } finally {
+      lineRuntime.notificationBusy = false;
+      renderLineNotificationSettings();
+    }
+  }
+
+  async function handleEnableLineNotification() {
+    if (!state.syncState || lineRuntime.notificationBusy) {
+      return;
+    }
+    lineRuntime.notificationBusy = true;
+    lineRuntime.notificationError = "";
+    renderLineNotificationSettings();
+    try {
+      await lineLinkApiRequest({
+        action: "link",
+        syncId: state.syncState.id,
+        syncKey: state.syncState.key
+      });
+      lineRuntime.notificationChecked = true;
+      lineRuntime.notificationLinked = true;
+      lineRuntime.notificationSyncIdPrefix = state.syncState.id.slice(0, 6);
+      lineRuntime.notificationUnavailable = false;
+      showToast("LINE通知を有効にしました");
+    } catch (error) {
+      handleLineNotificationError(error, "LINE通知を有効にできませんでした");
+    } finally {
+      lineRuntime.notificationBusy = false;
+      renderLineNotificationSettings();
+    }
+  }
+
+  async function handleUnlinkLineNotification() {
+    if (lineRuntime.notificationBusy) {
+      return;
+    }
+    lineRuntime.notificationBusy = true;
+    lineRuntime.notificationError = "";
+    renderLineNotificationSettings();
+    try {
+      await lineLinkApiRequest({ action: "unlink" });
+      lineRuntime.notificationChecked = true;
+      lineRuntime.notificationLinked = false;
+      lineRuntime.notificationSyncIdPrefix = "";
+      lineRuntime.notificationUnavailable = false;
+      showToast("LINE通知を解除しました");
+    } catch (error) {
+      handleLineNotificationError(error, "LINE通知を解除できませんでした");
+    } finally {
+      lineRuntime.notificationBusy = false;
+      renderLineNotificationSettings();
+    }
+  }
+
+  async function lineLinkApiRequest(payload) {
+    const idToken = await getLineIdToken();
+    if (!idToken) {
+      const error = new Error("line_login_required");
+      error.status = 401;
+      throw error;
+    }
+
+    const response = await fetch(LINE_LINK_API_PATH, {
+      method: "POST",
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        ...payload,
+        idToken
+      })
+    });
+    const contentType = response.headers.get("content-type") || "";
+    const body = contentType.includes("application/json")
+      ? await response.json().catch(() => null)
+      : null;
+    if (!response.ok) {
+      const error = new Error(body && body.error ? body.error : `line link failed: ${response.status}`);
+      error.status = response.status;
+      error.payload = body;
+      throw error;
+    }
+    return body;
+  }
+
+  async function getLineIdToken() {
+    const schedulerLine = window.SchedulerLine;
+    if (!schedulerLine || typeof schedulerLine.getIDToken !== "function") {
+      return null;
+    }
+    try {
+      return await schedulerLine.getIDToken();
+    } catch (error) {
+      console.warn("LINE ID token failed:", error);
+      return null;
+    }
+  }
+
+  function handleLineNotificationError(error, fallbackMessage) {
+    if (error && error.status === 503 && error.payload && error.payload.error === "line_not_configured") {
+      lineRuntime.notificationUnavailable = true;
+      lineRuntime.notificationError = "";
+      return;
+    }
+    lineRuntime.notificationUnavailable = false;
+    lineRuntime.notificationChecked = true;
+    lineRuntime.notificationError = error && error.status === 401
+      ? "LINEログインを確認できませんでした"
+      : fallbackMessage;
+    console.warn("LINE notification failed:", error && error.message ? error.message : error);
+  }
+
+  function lineNotificationLiffUrl() {
+    const schedulerLine = window.SchedulerLine;
+    if (schedulerLine && typeof schedulerLine.getLiffUrl === "function") {
+      return schedulerLine.getLiffUrl();
+    }
+    const config = window.LINE_CONFIG;
+    const liffId = config && typeof config.liffId === "string" ? config.liffId.trim() : "";
+    return liffId ? `https://liff.line.me/${encodeURIComponent(liffId)}` : "";
+  }
+
+  async function copyLineNotificationLiffUrl() {
+    const url = lineNotificationLiffUrl();
+    if (!url) {
+      return;
+    }
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      try {
+        await navigator.clipboard.writeText(url);
+        showToast("LIFF URLをコピーしました");
+        return;
+      } catch (error) {
+        // Fall through to the visible URL.
+      }
+    }
+    showToast("LIFF URLを選択してコピーしてください");
+  }
+
+  async function shareLineNotificationLiffUrl() {
+    const url = lineNotificationLiffUrl();
+    if (!url) {
+      return;
+    }
+    if (!canUseNavigatorShare()) {
+      await copyLineNotificationLiffUrl();
+      return;
+    }
+    try {
+      await navigator.share({
+        title: "scheduler LINE通知",
+        text: "LINEアプリ内でschedulerを開いて通知を設定します。",
+        url
+      });
+    } catch (error) {
+      if (!error || error.name !== "AbortError") {
+        showToast("共有を開始できませんでした", "error");
+      }
+    }
   }
 
   function isLineShareActive() {
@@ -1233,6 +1530,7 @@
       els.disconnectSyncButton.hidden = false;
       els.addSyncDeviceButton.disabled = unavailable;
       els.disconnectSyncButton.disabled = false;
+      renderLineNotificationSettings();
       return;
     }
 
@@ -1253,6 +1551,7 @@
     els.addSyncDeviceButton.hidden = true;
     els.disconnectSyncButton.hidden = true;
     els.startSyncButton.disabled = unavailable || state.syncServerStatus === "unknown";
+    renderLineNotificationSettings();
   }
 
   function formatSyncLastSyncAt(value) {

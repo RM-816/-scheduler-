@@ -11,6 +11,11 @@
     return config && typeof config.liffId === "string" ? config.liffId.trim() : "";
   }
 
+  function getLiffUrl() {
+    const liffId = getLiffId();
+    return liffId ? `https://liff.line.me/${encodeURIComponent(liffId)}` : "";
+  }
+
   function canLoadSdk() {
     return (
       typeof window !== "undefined" &&
@@ -107,6 +112,24 @@
     }
   }
 
+  async function getIDToken() {
+    if (!status.enabled) {
+      await init();
+    }
+    if (!status.enabled || !window.liff || typeof window.liff.getIDToken !== "function") {
+      return null;
+    }
+    try {
+      if (typeof window.liff.isLoggedIn === "function" && !window.liff.isLoggedIn()) {
+        return null;
+      }
+      return window.liff.getIDToken() || null;
+    } catch (error) {
+      console.warn("LINE getIDToken failed:", error);
+      return null;
+    }
+  }
+
   async function shareText(text) {
     if (!isInClient() || !window.liff) {
       return { status: "unavailable" };
@@ -135,6 +158,8 @@
   window.SchedulerLine = {
     init,
     isInClient,
+    getLiffUrl,
+    getIDToken,
     getProfileName,
     shareText
   };

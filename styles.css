@@ -838,6 +838,7 @@ textarea:focus {
 
 .setting-row,
 .sync-settings,
+.line-notification-settings,
 .info-box {
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -858,6 +859,7 @@ textarea:focus {
 
 .setting-row strong,
 .sync-settings h3,
+.line-notification-settings h3,
 .info-box strong {
   display: block;
   margin-bottom: 3px;
@@ -892,7 +894,20 @@ textarea:focus {
   padding: 14px;
 }
 
+.line-notification-settings {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
 .sync-settings-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.line-notification-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -903,7 +918,17 @@ textarea:focus {
   min-width: 0;
 }
 
+.line-notification-header > div {
+  min-width: 0;
+}
+
 .sync-settings h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.line-notification-settings h3 {
   margin: 0;
   font-size: 15px;
   font-weight: 800;
@@ -981,13 +1006,64 @@ textarea:focus {
   font-weight: 700;
 }
 
+.line-notification-status {
+  min-height: 18px;
+  margin: 2px 0 0;
+  color: var(--accent-dark);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.line-notification-description,
+.line-notification-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.line-notification-description {
+  color: var(--muted);
+}
+
+.line-notification-note {
+  padding: 8px 10px;
+  border: 1px solid #BBF7D0;
+  border-radius: var(--radius);
+  background: #F0FDF4;
+  color: #166534;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.line-notification-url {
+  padding: 8px 10px;
+  overflow-wrap: anywhere;
+  border: 1px solid #BFDBFE;
+  border-radius: var(--radius);
+  background: #EFF6FF;
+  color: #1D4ED8;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
 .sync-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
+.line-notification-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .sync-actions button {
+  flex: 1 1 148px;
+}
+
+.line-notification-actions button {
   flex: 1 1 148px;
 }
 
@@ -1239,6 +1315,10 @@ body[data-view="settings"] .chat-bar {
 body[data-view="todo"] .add-fab,
 body[data-view="settings"] .add-fab {
   bottom: calc(86px + env(safe-area-inset-bottom));
+}
+
+body[data-view="settings"] .add-fab {
+  display: none;
 }
 
 .tabbar {
