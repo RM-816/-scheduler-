@@ -46,6 +46,7 @@
   const SYNC_API_PATH = "/api/sync";
   const SYNC_DEBOUNCE_MS = 2500;
   const SYNC_INTERVAL_MS = 60000;
+  const SYNC_PUT_MAX_ATTEMPTS = 3;
   const SYNC_TOMBSTONE_MAX = 500;
   const SYNC_TOMBSTONE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
   const SYNC_DATA_LIMIT_BYTES = 256 * 1024;
@@ -102,7 +103,9 @@
     debounceTimer: null,
     intervalTimer: null,
     inFlight: false,
-    suppressLocalChange: false
+    suppressLocalChange: false,
+    pendingPush: false,
+    lastCycleFailed: false
   };
   const calendarSlideTimers = new WeakMap();
 
@@ -1119,7 +1122,10 @@
     if (configured) {
       const lastSyncText = formatSyncLastSyncAt(state.syncState.lastSyncAt);
       const syncCode = formatSyncGroupCode(state.syncState.id);
-      els.syncStatusText.textContent = `同期中 ✓${lastSyncText ? `（最終同期 ${lastSyncText}）` : ""}`;
+      const waitingForSync = syncRuntime.pendingPush || syncRuntime.lastCycleFailed;
+      els.syncStatusText.textContent = waitingForSync
+        ? "同期待ち（自動で再試行します）"
+        : `同期中 ✓${lastSyncText ? `（最終同期 ${lastSyncText}）` : ""}`;
       els.syncNowButton.hidden = false;
       els.syncNowButton.disabled = unavailable || syncRuntime.inFlight;
       els.syncNowButton.textContent = syncRuntime.inFlight ? "同期中…" : "今すぐ同期";
@@ -3146,6 +3152,8 @@
         lastSyncAt: new Date().toISOString()
       };
       saveSyncState();
+      syncRuntime.pendingPush = false;
+      syncRuntime.lastCycleFailed = false;
       state.syncServerStatus = "available";
       renderSyncSettings();
       showToast("同期を開始しました");
@@ -3298,6 +3306,8 @@
     }
     state.syncState = null;
     saveSyncState();
+    syncRuntime.pendingPush = false;
+    syncRuntime.lastCycleFailed = false;
     if (syncRuntime.debounceTimer) {
       window.clearTimeout(syncRuntime.debounceTimer);
       syncRuntime.debounceTimer = null;
@@ -3408,7 +3418,7 @@
 
     const eventIdsBeforeJoin = new Set(state.events.map((event) => event.id));
     try {
-      await pullMergePush(invite, { forcePut: true, retryOnce: true });
+      await pullAndApplyRemoteSyncData(invite);
       const importedEventCount = countEventsAddedSince(eventIdsBeforeJoin);
       state.syncState = {
         id: invite.id,
@@ -3416,9 +3426,15 @@
         lastSyncAt: new Date().toISOString()
       };
       saveSyncState();
+      syncRuntime.pendingPush = true;
+      syncRuntime.lastCycleFailed = false;
       state.syncServerStatus = "available";
       switchView("month");
+      renderSyncSettings();
       showToast(`同期に参加しました（${importedEventCount}件の予定を取り込み）`);
+      window.setTimeout(() => {
+        void runSyncCycle({ reason: "join", forcePut: true });
+      }, 0);
     } catch (error) {
       handleSyncUiError(error, "同期に参加できませんでした");
     }
@@ -3461,10 +3477,15 @@
     syncRuntime.inFlight = true;
     renderSyncSettings();
     try {
-      await pullMergePush(state.syncState, {
-        forcePut: Boolean(options && options.forcePut),
-        retryOnce: true
+      const result = await pullMergePush(state.syncState, {
+        forcePut: Boolean(options && options.forcePut) || syncRuntime.pendingPush
       });
+      syncRuntime.pendingPush = Boolean(result && result.pendingPush);
+      syncRuntime.lastCycleFailed = false;
+      if (syncRuntime.pendingPush) {
+        state.syncServerStatus = "available";
+        return true;
+      }
       const syncedAt = new Date().toISOString();
       state.syncState.lastSyncAt = syncedAt;
       saveSyncState();
@@ -3474,6 +3495,7 @@
       }
       return true;
     } catch (error) {
+      syncRuntime.lastCycleFailed = true;
       handleSyncBackgroundError(error);
       if (notify) {
         showToast("同期できませんでした", "error");
@@ -3486,18 +3508,26 @@
   }
 
   async function pullMergePush(credentials, options) {
-    const remote = await getSyncRemoteData(credentials);
-    try {
-      await mergeRemoteAndMaybePut(credentials, remote, Boolean(options && options.forcePut));
-      return;
-    } catch (error) {
-      if (!error || error.status !== 409 || !(options && options.retryOnce)) {
-        throw error;
+    const forcePut = Boolean(options && options.forcePut);
+    const maxAttempts = SYNC_PUT_MAX_ATTEMPTS;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const remote = await getSyncRemoteData(credentials);
+      try {
+        return await mergeRemoteAndMaybePut(credentials, remote, forcePut);
+      } catch (error) {
+        if (!error || error.status !== 409) {
+          throw error;
+        }
+        if (attempt === maxAttempts) {
+          syncRuntime.pendingPush = true;
+          return { pendingPush: true };
+        }
       }
     }
 
-    const latest = await getSyncRemoteData(credentials);
-    await mergeRemoteAndMaybePut(credentials, latest, true);
+    syncRuntime.pendingPush = true;
+    return { pendingPush: true };
   }
 
   async function mergeRemoteAndMaybePut(credentials, remotePayload, forcePut) {
@@ -3508,12 +3538,24 @@
       applySyncDataToState(merged);
     }
     if (!forcePut && syncDataEqual(remoteData, merged)) {
-      return;
+      return { pendingPush: false, pushed: false };
     }
     if (syncDataByteLength(merged) > SYNC_DATA_LIMIT_BYTES) {
       throw new Error("sync data too large");
     }
-    await putSyncRemoteData(credentials, merged, remotePayload.rev);
+    const payload = await putSyncRemoteData(credentials, merged, remotePayload.rev);
+    return { pendingPush: false, pushed: true, rev: payload.rev };
+  }
+
+  async function pullAndApplyRemoteSyncData(credentials) {
+    const remote = await getSyncRemoteData(credentials);
+    const localData = createLocalSyncData();
+    const merged = mergeSyncData(localData, remote.data);
+    applySyncDataToState(merged);
+    return {
+      data: merged,
+      rev: remote.rev
+    };
   }
 
   async function getSyncRemoteData(credentials) {
