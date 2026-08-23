@@ -74,6 +74,7 @@
     syncServerStatus: "unknown",
     categoryPaletteFor: null,
     syncLinkUrl: "",
+    syncInviteCode: "",
     notificationTimer: null,
     lastNotificationCheckAt: null,
     importCandidates: [],
@@ -170,9 +171,14 @@
     els.clearDataButton = byId("clearDataButton");
     els.openHelpButton = byId("openHelpButton");
     els.syncStatusText = byId("syncStatusText");
+    els.syncNowButton = byId("syncNowButton");
     els.syncDescription = byId("syncDescription");
+    els.syncGroupCode = byId("syncGroupCode");
+    els.syncGroupHelp = byId("syncGroupHelp");
     els.syncUnavailable = byId("syncUnavailable");
+    els.syncStartGuard = byId("syncStartGuard");
     els.startSyncButton = byId("startSyncButton");
+    els.joinSyncCodeButton = byId("joinSyncCodeButton");
     els.addSyncDeviceButton = byId("addSyncDeviceButton");
     els.disconnectSyncButton = byId("disconnectSyncButton");
 
@@ -238,10 +244,18 @@
     els.closeShareLinkButton = byId("closeShareLinkButton");
     els.syncLinkModal = byId("syncLinkModal");
     els.syncLinkText = byId("syncLinkText");
+    els.syncInviteCodeText = byId("syncInviteCodeText");
     els.closeSyncLinkModal = byId("closeSyncLinkModal");
     els.copySyncLinkButton = byId("copySyncLinkButton");
+    els.copySyncCodeButton = byId("copySyncCodeButton");
     els.shareSyncLinkButton = byId("shareSyncLinkButton");
     els.closeSyncLinkButton = byId("closeSyncLinkButton");
+    els.joinSyncCodeModal = byId("joinSyncCodeModal");
+    els.joinSyncCodeForm = byId("joinSyncCodeForm");
+    els.joinSyncCodeInput = byId("joinSyncCodeInput");
+    els.joinSyncCodeError = byId("joinSyncCodeError");
+    els.closeJoinSyncCodeModal = byId("closeJoinSyncCodeModal");
+    els.cancelJoinSyncCodeButton = byId("cancelJoinSyncCodeButton");
     els.sharedEventsModal = byId("sharedEventsModal");
     els.sharedEventsList = byId("sharedEventsList");
     els.sharedEventsSummary = byId("sharedEventsSummary");
@@ -362,6 +376,8 @@
     els.clearDataButton.addEventListener("click", handleClearData);
     els.openHelpButton.addEventListener("click", openHelpModal);
     els.startSyncButton.addEventListener("click", handleStartSync);
+    els.syncNowButton.addEventListener("click", handleSyncNow);
+    els.joinSyncCodeButton.addEventListener("click", openJoinSyncCodeModal);
     els.addSyncDeviceButton.addEventListener("click", openSyncLinkModal);
     els.disconnectSyncButton.addEventListener("click", handleDisconnectSync);
 
@@ -387,11 +403,21 @@
     });
     els.closeSyncLinkModal.addEventListener("click", closeSyncLinkModal);
     els.copySyncLinkButton.addEventListener("click", copySyncLink);
+    els.copySyncCodeButton.addEventListener("click", copySyncInviteCode);
     els.shareSyncLinkButton.addEventListener("click", shareSyncLink);
     els.closeSyncLinkButton.addEventListener("click", closeSyncLinkModal);
     els.syncLinkModal.addEventListener("click", (event) => {
       if (event.target === els.syncLinkModal) {
         closeSyncLinkModal();
+      }
+    });
+    els.closeJoinSyncCodeModal.addEventListener("click", closeJoinSyncCodeModal);
+    els.cancelJoinSyncCodeButton.addEventListener("click", closeJoinSyncCodeModal);
+    els.joinSyncCodeForm.addEventListener("submit", handleJoinSyncCodeSubmit);
+    els.joinSyncCodeInput.addEventListener("input", clearJoinSyncCodeError);
+    els.joinSyncCodeModal.addEventListener("click", (event) => {
+      if (event.target === els.joinSyncCodeModal) {
+        closeJoinSyncCodeModal();
       }
     });
     els.cancelSharedEventsButton.addEventListener("click", cancelSharedEvents);
@@ -432,6 +458,8 @@
         closeShareLinkModal();
       } else if (!els.syncLinkModal.hidden) {
         closeSyncLinkModal();
+      } else if (!els.joinSyncCodeModal.hidden) {
+        closeJoinSyncCodeModal();
       } else if (!els.choiceModal.hidden) {
         closeChoiceModal({ runCancel: true });
       } else if (!els.importModal.hidden) {
@@ -1090,9 +1118,21 @@
 
     if (configured) {
       const lastSyncText = formatSyncLastSyncAt(state.syncState.lastSyncAt);
+      const syncCode = formatSyncGroupCode(state.syncState.id);
       els.syncStatusText.textContent = `同期中 ✓${lastSyncText ? `（最終同期 ${lastSyncText}）` : ""}`;
+      els.syncNowButton.hidden = false;
+      els.syncNowButton.disabled = unavailable || syncRuntime.inFlight;
+      els.syncNowButton.textContent = syncRuntime.inFlight ? "同期中…" : "今すぐ同期";
       els.syncDescription.textContent = "別の端末を追加すると、この端末の予定・ToDo・カテゴリと自動で統合されます。";
+      els.syncGroupCode.textContent = `グループコード: ${syncCode}`;
+      els.syncGroupCode.hidden = false;
+      els.syncGroupHelp.hidden = false;
+      els.syncStartGuard.hidden = true;
       els.startSyncButton.hidden = true;
+      els.joinSyncCodeButton.hidden = false;
+      els.joinSyncCodeButton.disabled = unavailable;
+      els.joinSyncCodeButton.textContent = "コードで参加（別グループへ切り替え）";
+      els.joinSyncCodeButton.classList.add("is-compact");
       els.addSyncDeviceButton.hidden = false;
       els.disconnectSyncButton.hidden = false;
       els.addSyncDeviceButton.disabled = unavailable;
@@ -1101,8 +1141,19 @@
     }
 
     els.syncStatusText.textContent = "";
+    els.syncNowButton.hidden = true;
+    els.syncNowButton.disabled = true;
+    els.syncNowButton.textContent = "今すぐ同期";
     els.syncDescription.textContent = "同期コードを作ると、ほかの端末と予定・ToDo・カテゴリを自動で同期できます";
+    els.syncGroupCode.hidden = true;
+    els.syncGroupCode.textContent = "";
+    els.syncGroupHelp.hidden = true;
+    els.syncStartGuard.hidden = false;
     els.startSyncButton.hidden = false;
+    els.joinSyncCodeButton.hidden = false;
+    els.joinSyncCodeButton.disabled = unavailable;
+    els.joinSyncCodeButton.textContent = "コードで参加";
+    els.joinSyncCodeButton.classList.remove("is-compact");
     els.addSyncDeviceButton.hidden = true;
     els.disconnectSyncButton.hidden = true;
     els.startSyncButton.disabled = unavailable || state.syncServerStatus === "unknown";
@@ -1114,6 +1165,10 @@
     }
     const date = new Date(value);
     return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  }
+
+  function formatSyncGroupCode(id) {
+    return typeof id === "string" ? id.slice(0, 6).toUpperCase() : "";
   }
 
   function renderEventColorOptions() {
@@ -3101,12 +3156,26 @@
     }
   }
 
+  async function handleSyncNow() {
+    if (!state.syncState || syncRuntime.inFlight) {
+      return;
+    }
+    if (!await ensureSyncServerAvailable()) {
+      renderSyncSettings();
+      showToast("同期できませんでした", "error");
+      return;
+    }
+    await runSyncCycle({ reason: "manual", notify: true });
+  }
+
   function openSyncLinkModal() {
     if (!state.syncState) {
       return;
     }
+    state.syncInviteCode = createSyncInviteCode(state.syncState);
     state.syncLinkUrl = createSyncInviteUrl(state.syncState);
     els.syncLinkText.value = state.syncLinkUrl;
+    els.syncInviteCodeText.value = state.syncInviteCode;
     els.shareSyncLinkButton.disabled = !(navigator.share && typeof navigator.share === "function");
     els.syncLinkModal.hidden = false;
     window.setTimeout(() => {
@@ -3118,7 +3187,9 @@
   function closeSyncLinkModal() {
     els.syncLinkModal.hidden = true;
     els.syncLinkText.value = "";
+    els.syncInviteCodeText.value = "";
     state.syncLinkUrl = "";
+    state.syncInviteCode = "";
   }
 
   async function copySyncLink() {
@@ -3140,6 +3211,25 @@
     showToast("リンクを選択しました");
   }
 
+  async function copySyncInviteCode() {
+    const code = state.syncInviteCode || els.syncInviteCodeText.value;
+    if (!code) {
+      return;
+    }
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      try {
+        await navigator.clipboard.writeText(code);
+        showToast("同期コードをコピーしました");
+        return;
+      } catch (error) {
+        // Fall through to selectable text.
+      }
+    }
+    els.syncInviteCodeText.focus();
+    els.syncInviteCodeText.select();
+    showToast("コードを選択しました");
+  }
+
   async function shareSyncLink() {
     const url = state.syncLinkUrl || els.syncLinkText.value;
     if (!url || !(navigator.share && typeof navigator.share === "function")) {
@@ -3158,8 +3248,45 @@
     }
   }
 
+  function createSyncInviteCode(syncState) {
+    return `${syncState.id}.${syncState.key}`;
+  }
+
   function createSyncInviteUrl(syncState) {
-    return `${pageBaseUrl()}${SYNC_HASH_PREFIX}${syncState.id}.${syncState.key}`;
+    return `${pageBaseUrl()}${SYNC_HASH_PREFIX}${createSyncInviteCode(syncState)}`;
+  }
+
+  function openJoinSyncCodeModal() {
+    els.joinSyncCodeInput.value = "";
+    clearJoinSyncCodeError();
+    els.joinSyncCodeModal.hidden = false;
+    window.setTimeout(() => {
+      els.joinSyncCodeInput.focus();
+    }, 0);
+  }
+
+  function closeJoinSyncCodeModal() {
+    els.joinSyncCodeModal.hidden = true;
+    els.joinSyncCodeInput.value = "";
+    clearJoinSyncCodeError();
+  }
+
+  function clearJoinSyncCodeError() {
+    els.joinSyncCodeError.textContent = "";
+    els.joinSyncCodeInput.removeAttribute("aria-invalid");
+  }
+
+  function handleJoinSyncCodeSubmit(event) {
+    event.preventDefault();
+    const invite = parseSyncInviteText(els.joinSyncCodeInput.value);
+    if (!invite) {
+      els.joinSyncCodeError.textContent = "コードの形式が正しくありません";
+      els.joinSyncCodeInput.setAttribute("aria-invalid", "true");
+      els.joinSyncCodeInput.focus();
+      return;
+    }
+    closeJoinSyncCodeModal();
+    confirmJoinSyncFromInvite(invite);
   }
 
   function handleDisconnectSync() {
@@ -3190,6 +3317,42 @@
       return true;
     }
 
+    return confirmJoinSyncFromInvite(invite, { consumeInvite: removeCurrentHash });
+  }
+
+  function confirmJoinSyncFromInvite(invite, options) {
+    const consumeInvite = options && typeof options.consumeInvite === "function"
+      ? options.consumeInvite
+      : () => {};
+
+    if (state.syncState && state.syncState.id === invite.id) {
+      consumeInvite();
+      showToast("すでにこのグループに参加しています");
+      return true;
+    }
+
+    if (state.syncState) {
+      const currentCode = formatSyncGroupCode(state.syncState.id);
+      const nextCode = formatSyncGroupCode(invite.id);
+      showChoice({
+        title: "同期グループの切り替え",
+        message: `この端末は既に同期グループ(コード: ${currentCode})に参加しています。新しいグループ(コード: ${nextCode})に切り替えますか？切り替えるとこの端末は元のグループと同期されなくなります`,
+        actions: [
+          {
+            label: "切り替える",
+            className: "primary-button",
+            onClick: () => {
+              closeChoiceModal();
+              consumeInvite();
+              joinSyncFromInvite(invite);
+            }
+          }
+        ],
+        onCancel: consumeInvite
+      });
+      return true;
+    }
+
     showChoice({
       title: "同期に参加",
       message: "この端末を同期に参加させますか？この端末の予定と統合されます",
@@ -3199,18 +3362,33 @@
           className: "primary-button",
           onClick: () => {
             closeChoiceModal();
-            removeCurrentHash();
+            consumeInvite();
             joinSyncFromInvite(invite);
           }
         }
       ],
-      onCancel: removeCurrentHash
+      onCancel: consumeInvite
     });
     return true;
   }
 
   function parseSyncInviteHash(hash) {
-    const value = hash.slice(SYNC_HASH_PREFIX.length);
+    if (typeof hash !== "string" || !hash.startsWith(SYNC_HASH_PREFIX)) {
+      return null;
+    }
+    return parseSyncInviteText(hash);
+  }
+
+  function parseSyncInviteText(text) {
+    const input = typeof text === "string" ? text.trim() : "";
+    if (!input) {
+      return null;
+    }
+    const hashIndex = input.indexOf(SYNC_HASH_PREFIX);
+    const value = (hashIndex >= 0
+      ? input.slice(hashIndex + SYNC_HASH_PREFIX.length)
+      : input
+    ).trim();
     const parts = value.split(".");
     if (parts.length !== 2 || !isValidSyncToken(parts[0]) || !isValidSyncToken(parts[1])) {
       return null;
@@ -3228,8 +3406,10 @@
       return;
     }
 
+    const eventIdsBeforeJoin = new Set(state.events.map((event) => event.id));
     try {
       await pullMergePush(invite, { forcePut: true, retryOnce: true });
+      const importedEventCount = countEventsAddedSince(eventIdsBeforeJoin);
       state.syncState = {
         id: invite.id,
         key: invite.key,
@@ -3237,11 +3417,17 @@
       };
       saveSyncState();
       state.syncServerStatus = "available";
-      renderAll();
-      showToast("同期に参加しました");
+      switchView("month");
+      showToast(`同期に参加しました（${importedEventCount}件の予定を取り込み）`);
     } catch (error) {
       handleSyncUiError(error, "同期に参加できませんでした");
     }
+  }
+
+  function countEventsAddedSince(eventIdsBefore) {
+    return state.events.reduce((count, event) => {
+      return event && !eventIdsBefore.has(event.id) ? count + 1 : count;
+    }, 0);
   }
 
   function scheduleSyncAfterLocalChange(options) {
@@ -3261,24 +3447,38 @@
   }
 
   async function runSyncCycle(options) {
+    const notify = Boolean(options && options.notify);
     if (!state.syncState || !isSyncTransportUsable()) {
-      return;
+      if (notify) {
+        showToast("同期できませんでした", "error");
+      }
+      return false;
     }
     if (syncRuntime.inFlight) {
-      return;
+      return false;
     }
 
     syncRuntime.inFlight = true;
+    renderSyncSettings();
     try {
       await pullMergePush(state.syncState, {
         forcePut: Boolean(options && options.forcePut),
         retryOnce: true
       });
-      state.syncState.lastSyncAt = new Date().toISOString();
+      const syncedAt = new Date().toISOString();
+      state.syncState.lastSyncAt = syncedAt;
       saveSyncState();
       state.syncServerStatus = "available";
+      if (notify) {
+        showToast(`同期しました（${formatSyncLastSyncAt(syncedAt)}）`);
+      }
+      return true;
     } catch (error) {
       handleSyncBackgroundError(error);
+      if (notify) {
+        showToast("同期できませんでした", "error");
+      }
+      return false;
     } finally {
       syncRuntime.inFlight = false;
       renderSyncSettings();

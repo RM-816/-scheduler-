@@ -899,10 +899,22 @@ textarea:focus {
   gap: 12px;
 }
 
+.sync-settings-header > div {
+  min-width: 0;
+}
+
 .sync-settings h3 {
   margin: 0;
   font-size: 15px;
   font-weight: 800;
+}
+
+.sync-status-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin-top: 2px;
 }
 
 .sync-status-text {
@@ -913,8 +925,19 @@ textarea:focus {
   font-weight: 800;
 }
 
+.sync-now-button {
+  min-height: 28px;
+  padding: 5px 10px;
+  flex: 0 0 auto;
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
 .sync-description,
-.sync-unavailable {
+.sync-unavailable,
+.sync-group-help,
+.sync-start-guard {
   margin: 0;
   font-size: 13px;
   line-height: 1.6;
@@ -924,8 +947,37 @@ textarea:focus {
   color: var(--muted);
 }
 
+.sync-group-code {
+  width: fit-content;
+  max-width: 100%;
+  padding: 6px 10px;
+  overflow-wrap: anywhere;
+  border: 1px solid #BFDBFE;
+  border-radius: var(--radius);
+  background: #EFF6FF;
+  color: #1D4ED8;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.sync-group-help {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .sync-unavailable {
   color: #B91C1C;
+  font-weight: 700;
+}
+
+.sync-start-guard {
+  padding: 8px 10px;
+  border: 1px solid #FED7AA;
+  border-radius: var(--radius);
+  background: #FFF7ED;
+  color: #9A3412;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -937,6 +989,15 @@ textarea:focus {
 
 .sync-actions button {
   flex: 1 1 148px;
+}
+
+.sync-code-join-button.is-compact {
+  min-height: 30px;
+  flex: 0 1 auto;
+  padding: 5px 10px;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;
 }
 
 .category-settings {
@@ -1639,6 +1700,12 @@ body[data-view="settings"] .add-fab {
   margin: 14px 16px;
 }
 
+.sync-link-card > .share-link-text {
+  flex: 0 0 auto;
+  min-height: 88px;
+  margin-bottom: 10px;
+}
+
 .event-form {
   display: flex;
   flex: 1 1 auto;
@@ -1798,7 +1865,9 @@ body[data-view="settings"] .add-fab {
 }
 
 .shared-events-card,
-.share-link-card {
+.share-link-card,
+.sync-link-card,
+.sync-code-card {
   width: min(100%, 430px);
 }
 
@@ -1875,6 +1944,92 @@ body[data-view="settings"] .add-fab {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.sync-invite-code-panel {
+  display: grid;
+  gap: 8px;
+  margin: 0 16px 10px;
+  padding: 10px;
+  border: 1px solid #BFDBFE;
+  border-radius: var(--radius);
+  background: #EFF6FF;
+}
+
+.sync-invite-code-panel label,
+.sync-code-field > span {
+  color: #374151;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.sync-invite-code-text,
+.sync-code-input {
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.sync-invite-code-text {
+  min-height: 58px;
+  resize: none;
+}
+
+.sync-invite-code-panel button {
+  justify-self: start;
+}
+
+.sync-invite-note {
+  margin: 0 16px 12px;
+  padding: 8px 10px;
+  border: 1px solid #FED7AA;
+  border-radius: var(--radius);
+  background: #FFF7ED;
+  color: #9A3412;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+.sync-code-form {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.sync-code-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sync-code-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sync-code-input {
+  min-height: 106px;
+}
+
+.sync-code-input[aria-invalid="true"] {
+  border-color: #FCA5A5;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12);
+}
+
+.sync-code-error {
+  min-height: 18px;
 }
 
 .visually-hidden {
@@ -2216,6 +2371,7 @@ body[data-view="settings"] .add-fab {
   .shared-events-card,
   .share-link-card,
   .sync-link-card,
+  .sync-code-card,
   .category-editor-card {
     width: min(100%, 520px);
     border-radius: var(--radius);

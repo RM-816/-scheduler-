@@ -127,13 +127,20 @@
             <div class="sync-settings-header">
               <div>
                 <h3 id="syncSettingsTitle">端末間の同期</h3>
-                <p id="syncStatusText" class="sync-status-text" aria-live="polite"></p>
+                <div class="sync-status-row">
+                  <p id="syncStatusText" class="sync-status-text" aria-live="polite"></p>
+                  <button id="syncNowButton" class="secondary-button sync-now-button" type="button" hidden>今すぐ同期</button>
+                </div>
               </div>
             </div>
             <p id="syncDescription" class="sync-description">同期コードを作ると、ほかの端末と予定・ToDo・カテゴリを自動で同期できます</p>
+            <div id="syncGroupCode" class="sync-group-code" hidden></div>
+            <p id="syncGroupHelp" class="sync-group-help" hidden>同期中の端末同士はこのコードが一致します</p>
             <p id="syncUnavailable" class="sync-unavailable" hidden>同期サーバーが未設定のため利用できません</p>
+            <p id="syncStartGuard" class="sync-start-guard">※最初の1台だけが「開始」します。2台目以降は「別の端末を追加」のリンク、または「コードで参加」から参加してください</p>
             <div class="sync-actions">
               <button id="startSyncButton" class="primary-button" type="button">同期を開始</button>
+              <button id="joinSyncCodeButton" class="secondary-button sync-code-join-button" type="button">コードで参加</button>
               <button id="addSyncDeviceButton" class="secondary-button" type="button" hidden>別の端末を追加</button>
               <button id="disconnectSyncButton" class="danger-outline-button" type="button" hidden>同期を解除</button>
             </div>
@@ -242,16 +249,23 @@
             <p>受け取った人はリンクを開き、「追加」を押すだけで予定を取り込めます。</p>
           </li>
           <li class="help-section">
-            <h3><span>6</span>カテゴリを自分好みに</h3>
+            <h3><span>6</span>同期</h3>
+            <p>予定を端末間で揃えるときは、最初の1台だけが設定の「同期を開始」を押します。2台目以降は、1台目の「別の端末を追加」から同期リンクまたはコードを受け取って参加します。</p>
+            <p>ホーム画面に追加したアプリで参加する場合は、リンクではなく設定の「端末間の同期」から「コードで参加」を開き、受け取ったコードを貼り付けます。</p>
+            <p>設定の「端末間の同期」に表示されるグループコードが、同期中の端末同士で同じなら同じグループです。</p>
+            <p>同期リンクは合鍵のようなものです。家族と共有すると共有カレンダーとして使えますが、予定を見せたくない相手には送らないでください。</p>
+          </li>
+          <li class="help-section">
+            <h3><span>7</span>カテゴリを自分好みに</h3>
             <p>予定フォームのカテゴリ欄にある「編集」、または設定の「カテゴリ」から、名前と色を変更・追加・削除できます。</p>
           </li>
           <li class="help-section">
-            <h3><span>7</span>スマホでアプリのように使う</h3>
+            <h3><span>8</span>スマホでアプリのように使う</h3>
             <p>iPhoneはSafariで開き、共有ボタンから「ホーム画面に追加」を選びます。AndroidはChromeで開き、メニュー(⋮)から「ホーム画面に追加」を選びます。</p>
             <p>追加後はアイコンから全画面で起動でき、オフラインでも開けます。</p>
           </li>
           <li class="help-section">
-            <h3><span>8</span>データについて</h3>
+            <h3><span>9</span>データについて</h3>
             <p>予定はこの端末のブラウザ内に保存されます。同期をONにした場合は、予定・ToDo・カテゴリが同期サーバーにも保存され、ほかの端末と統合されます。</p>
             <p>初期化したいときは、設定の「データを全削除」を使います。</p>
           </li>
@@ -423,12 +437,44 @@
         <button id="closeSyncLinkModal" class="icon-button" type="button" aria-label="閉じる">×</button>
       </div>
       <textarea id="syncLinkText" class="share-link-text" rows="4" readonly></textarea>
+      <div class="sync-invite-code-panel">
+        <label for="syncInviteCodeText">コード</label>
+        <textarea id="syncInviteCodeText" class="sync-invite-code-text" rows="2" readonly></textarea>
+        <button id="copySyncCodeButton" class="secondary-button" type="button">コードをコピー</button>
+      </div>
+      <p class="sync-invite-note">ホーム画面に追加したアプリで参加する場合は、リンクではなくこのコードをコピーして、相手端末の設定→端末間の同期→『コードで参加』に貼り付けてください</p>
       <div class="modal-actions">
         <button id="copySyncLinkButton" class="secondary-button" type="button">コピー</button>
         <button id="shareSyncLinkButton" class="secondary-button" type="button">共有</button>
         <span class="action-spacer"></span>
         <button id="closeSyncLinkButton" class="primary-button" type="button">閉じる</button>
       </div>
+    </section>
+  </div>
+
+  <div id="joinSyncCodeModal" class="modal-backdrop" hidden>
+    <section class="modal-card sync-code-card" aria-labelledby="joinSyncCodeTitle" role="dialog" aria-modal="true">
+      <div class="sheet-header">
+        <div>
+          <h2 id="joinSyncCodeTitle">コードで参加</h2>
+          <p class="muted-text">別の端末の「別の端末を追加」画面に表示されるコード（またはリンク）を貼り付けてください</p>
+        </div>
+        <button id="closeJoinSyncCodeModal" class="icon-button" type="button" aria-label="閉じる">×</button>
+      </div>
+      <form id="joinSyncCodeForm" class="sync-code-form">
+        <div class="modal-body sync-code-body">
+          <label class="sync-code-field" for="joinSyncCodeInput">
+            <span>同期コードまたはリンク</span>
+            <textarea id="joinSyncCodeInput" class="sync-code-input" rows="4" autocomplete="off" autocapitalize="none" spellcheck="false"></textarea>
+          </label>
+          <p id="joinSyncCodeError" class="form-error sync-code-error" role="alert"></p>
+        </div>
+        <div class="modal-actions">
+          <span class="action-spacer"></span>
+          <button id="cancelJoinSyncCodeButton" class="secondary-button" type="button">キャンセル</button>
+          <button id="submitJoinSyncCodeButton" class="primary-button" type="submit">参加</button>
+        </div>
+      </form>
     </section>
   </div>
 
