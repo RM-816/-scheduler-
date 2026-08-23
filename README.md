@@ -29,11 +29,18 @@
 
 公開後のURL: `(デプロイURL)`
 
+## LINEミニアプリ（LIFF）対応
+
+`line-config.js` の `window.LINE_CONFIG.liffId` に LIFF ID を設定すると、LINEアプリ内で開いたときだけ LINE 共有と連携表示が有効になります。初期値は空文字のため、未設定では LIFF SDK の読み込みや初期化は行われません。
+
+LINE Developers では LINEログインチャネルを作成し、チャネル内で LIFF アプリを追加してください。LIFF のエンドポイントURLには、Vercelで公開したこのアプリのURLを設定します。LIFF経由の同期招待・予定共有は URL フラグメントが保持されないため、`?sync=ID.KEY` と `?share=BASE64` のクエリ形式でも受け取れるようにしています。
+
 ## 技術構成
 
 - vanilla JS
 - HTML / CSS
 - PWA: `manifest.json` / `sw.js`
+- LINEミニアプリ対応: `line-config.js` / `line.js`
 - Tesseract.jsローカル同梱
 - 同期API: `api/sync.js` (Vercel Node serverless)
 - データ保存: ブラウザの `localStorage`
@@ -56,6 +63,8 @@ Vercelの環境変数には、次のどちらかの組み合わせを設定し�
 .
 ├── index.html
 ├── app.js
+├── line-config.js
+├── line.js
 ├── api/
 │   └── sync.js
 ├── styles.css

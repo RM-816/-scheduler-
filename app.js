@@ -36,6 +36,7 @@
   const VALID_TIME_MODES = new Set(["timed", "allday", "am", "pm"]);
   const SHARE_VERSION = 1;
   const SHARE_HASH_PREFIX = "#share=";
+  const SHARE_QUERY_PARAM = "share";
   const SHARE_MAX_EVENTS = 30;
   const SHARE_MAX_HASH_LENGTH = 60000;
   const SHARE_TITLE_MAX_LENGTH = 80;
@@ -43,6 +44,7 @@
   const SHARE_CATEGORY_LABEL_MAX_LENGTH = CATEGORY_LABEL_MAX_LENGTH;
   const SHARE_WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
   const SYNC_HASH_PREFIX = "#sync=";
+  const SYNC_QUERY_PARAM = "sync";
   const SYNC_API_PATH = "/api/sync";
   const SYNC_DEBOUNCE_MS = 2500;
   const SYNC_INTERVAL_MS = 60000;
@@ -107,6 +109,12 @@
     pendingPush: false,
     lastCycleFailed: false
   };
+  const lineRuntime = {
+    initialized: false,
+    enabled: false,
+    inClient: false,
+    profileName: null
+  };
   const calendarSlideTimers = new WeakMap();
 
   document.addEventListener("DOMContentLoaded", init);
@@ -126,8 +134,9 @@
     renderAll();
     startNotificationTimer();
     setupSyncEngine();
-    handleIncomingSyncHash();
-    handleIncomingShareHash();
+    void initLineIntegration();
+    handleIncomingSyncInvite();
+    handleIncomingShareInvite();
   }
 
   function cacheElements() {
@@ -169,6 +178,8 @@
     els.notificationToggle = byId("notificationToggle");
     els.defaultReminderSelect = byId("defaultReminderSelect");
     els.defaultReminderCustom = byId("defaultReminderCustom");
+    els.lineIntegrationRow = byId("lineIntegrationRow");
+    els.lineIntegrationStatus = byId("lineIntegrationStatus");
     els.categorySettingsList = byId("categorySettingsList");
     els.addCategoryButton = byId("addCategoryButton");
     els.clearDataButton = byId("clearDataButton");
@@ -1110,8 +1121,87 @@
     els.notificationToggle.checked = Boolean(state.settings.notifications);
     setReminderControlValue(els.defaultReminderSelect, els.defaultReminderCustom, state.settings.defaultReminder);
     setDefaultReminderDisabled(!state.settings.notifications);
+    renderLineIntegrationSettings();
     renderSyncSettings();
     renderCategorySettings();
+  }
+
+  async function initLineIntegration() {
+    const schedulerLine = window.SchedulerLine;
+    if (!schedulerLine || typeof schedulerLine.init !== "function") {
+      return;
+    }
+
+    try {
+      const result = await schedulerLine.init();
+      lineRuntime.initialized = true;
+      lineRuntime.enabled = Boolean(result && result.enabled);
+      lineRuntime.inClient = Boolean(result && result.inClient);
+
+      if (lineRuntime.inClient && typeof schedulerLine.getProfileName === "function") {
+        try {
+          lineRuntime.profileName = await schedulerLine.getProfileName();
+        } catch (profileError) {
+          lineRuntime.profileName = null;
+        }
+      }
+    } catch (error) {
+      console.warn("LINE integration failed:", error);
+      lineRuntime.initialized = true;
+      lineRuntime.enabled = false;
+      lineRuntime.inClient = false;
+      lineRuntime.profileName = null;
+    }
+
+    renderLineIntegrationSettings();
+    updateSyncLinkShareButton();
+  }
+
+  function renderLineIntegrationSettings() {
+    if (!els.lineIntegrationRow || !els.lineIntegrationStatus) {
+      return;
+    }
+    els.lineIntegrationRow.hidden = !lineRuntime.inClient;
+    if (!lineRuntime.inClient) {
+      return;
+    }
+    const profileSuffix = lineRuntime.profileName ? `（${lineRuntime.profileName}）` : "";
+    els.lineIntegrationStatus.textContent = `LINE内で実行中${profileSuffix}`;
+  }
+
+  function isLineShareActive() {
+    const schedulerLine = window.SchedulerLine;
+    return Boolean(
+      lineRuntime.enabled &&
+      lineRuntime.inClient &&
+      schedulerLine &&
+      typeof schedulerLine.isInClient === "function" &&
+      schedulerLine.isInClient() &&
+      typeof schedulerLine.shareText === "function"
+    );
+  }
+
+  function canUseNavigatorShare() {
+    return Boolean(navigator.share && typeof navigator.share === "function");
+  }
+
+  async function tryLineShareText(text) {
+    if (!isLineShareActive()) {
+      return { status: "unavailable" };
+    }
+    try {
+      return await window.SchedulerLine.shareText(text);
+    } catch (error) {
+      console.warn("LINE share failed:", error);
+      return { status: "failed", error };
+    }
+  }
+
+  function updateSyncLinkShareButton() {
+    if (!els.shareSyncLinkButton) {
+      return;
+    }
+    els.shareSyncLinkButton.disabled = !(isLineShareActive() || canUseNavigatorShare());
   }
 
   function renderSyncSettings() {
@@ -1897,13 +1987,18 @@
 
     let url = "";
     try {
-      url = createShareUrl(events);
+      url = createShareUrl(events, { query: isLineShareActive() });
     } catch (error) {
       showToast("共有リンクを作成できませんでした", "error");
       return;
     }
 
-    if (navigator.share && typeof navigator.share === "function") {
+    if (isLineShareActive()) {
+      const result = await tryLineShareText(`${text}\n予定リンク: ${url}`);
+      if (result && result.status === "success") {
+        return;
+      }
+    } else if (canUseNavigatorShare()) {
       try {
         await navigator.share({
           title: "予定の共有",
@@ -1931,12 +2026,15 @@
     openShareLinkModal(url);
   }
 
-  function createShareUrl(events) {
+  function createShareUrl(events, options) {
     const payload = {
       v: SHARE_VERSION,
       e: events.map(createSharedEventRecord)
     };
     const encoded = utf8ToBase64Url(JSON.stringify(payload));
+    if (options && options.query) {
+      return `${pageBaseUrl()}?${SHARE_QUERY_PARAM}=${encodeURIComponent(encoded)}`;
+    }
     // The schedule payload is stored in location.hash, so it is not sent to the server in the HTTP request.
     return `${pageBaseUrl()}${SHARE_HASH_PREFIX}${encoded}`;
   }
@@ -1985,20 +2083,48 @@
     els.shareLinkText.value = "";
   }
 
-  function handleIncomingShareHash() {
-    if (!location.hash || !location.hash.startsWith(SHARE_HASH_PREFIX)) {
-      return;
+  function handleIncomingShareInvite() {
+    if (handleIncomingShareQuery()) {
+      return true;
+    }
+    return handleIncomingShareHash();
+  }
+
+  function handleIncomingShareQuery() {
+    const encoded = readQueryParam(SHARE_QUERY_PARAM);
+    if (encoded === null) {
+      return false;
     }
 
     try {
-      const records = parseSharedPayload(location.hash.slice(SHARE_HASH_PREFIX.length));
-      state.pendingSharedEvents = records.map(createSharedImportEntry);
-      renderSharedEventsModal();
-      els.sharedEventsModal.hidden = false;
+      openSharedEventsImport(encoded);
+      removeQueryParams([SHARE_QUERY_PARAM]);
+    } catch (error) {
+      removeQueryParams([SHARE_QUERY_PARAM]);
+      showToast("リンクが正しくありません", "error");
+    }
+    return true;
+  }
+
+  function handleIncomingShareHash() {
+    if (!location.hash || !location.hash.startsWith(SHARE_HASH_PREFIX)) {
+      return false;
+    }
+
+    try {
+      openSharedEventsImport(location.hash.slice(SHARE_HASH_PREFIX.length));
     } catch (error) {
       removeShareHash();
       showToast("リンクが正しくありません", "error");
     }
+    return true;
+  }
+
+  function openSharedEventsImport(encoded) {
+    const records = parseSharedPayload(encoded);
+    state.pendingSharedEvents = records.map(createSharedImportEntry);
+    renderSharedEventsModal();
+    els.sharedEventsModal.hidden = false;
   }
 
   function parseSharedPayload(encoded) {
@@ -3181,10 +3307,10 @@
       return;
     }
     state.syncInviteCode = createSyncInviteCode(state.syncState);
-    state.syncLinkUrl = createSyncInviteUrl(state.syncState);
+    state.syncLinkUrl = createSyncInviteUrl(state.syncState, { query: isLineShareActive() });
     els.syncLinkText.value = state.syncLinkUrl;
     els.syncInviteCodeText.value = state.syncInviteCode;
-    els.shareSyncLinkButton.disabled = !(navigator.share && typeof navigator.share === "function");
+    updateSyncLinkShareButton();
     els.syncLinkModal.hidden = false;
     window.setTimeout(() => {
       els.syncLinkText.focus();
@@ -3240,13 +3366,25 @@
 
   async function shareSyncLink() {
     const url = state.syncLinkUrl || els.syncLinkText.value;
-    if (!url || !(navigator.share && typeof navigator.share === "function")) {
+    if (!url) {
+      return;
+    }
+    const text = "このリンクを開くと、この端末の予定・ToDo・カテゴリと同期できます。";
+    if (isLineShareActive()) {
+      const result = await tryLineShareText(`${text}\n同期リンク: ${url}`);
+      if (result && result.status === "success") {
+        return;
+      }
+      await copySyncLink();
+      return;
+    }
+    if (!canUseNavigatorShare()) {
       return;
     }
     try {
       await navigator.share({
         title: "schedulerの同期",
-        text: "このリンクを開くと、この端末の予定・ToDo・カテゴリと同期できます。",
+        text,
         url
       });
     } catch (error) {
@@ -3260,8 +3398,12 @@
     return `${syncState.id}.${syncState.key}`;
   }
 
-  function createSyncInviteUrl(syncState) {
-    return `${pageBaseUrl()}${SYNC_HASH_PREFIX}${createSyncInviteCode(syncState)}`;
+  function createSyncInviteUrl(syncState, options) {
+    const code = createSyncInviteCode(syncState);
+    if (options && options.query) {
+      return `${pageBaseUrl()}?${SYNC_QUERY_PARAM}=${encodeURIComponent(code)}`;
+    }
+    return `${pageBaseUrl()}${SYNC_HASH_PREFIX}${code}`;
   }
 
   function openJoinSyncCodeModal() {
@@ -3314,6 +3456,33 @@
     }
     renderSyncSettings();
     showToast("同期を解除しました");
+  }
+
+  function handleIncomingSyncInvite() {
+    if (handleIncomingSyncQuery()) {
+      return true;
+    }
+    return handleIncomingSyncHash();
+  }
+
+  function handleIncomingSyncQuery() {
+    const value = readQueryParam(SYNC_QUERY_PARAM);
+    if (value === null) {
+      return false;
+    }
+
+    const invite = parseSyncInviteText(value);
+    if (!invite) {
+      removeQueryParams([SYNC_QUERY_PARAM]);
+      showToast("同期リンクが正しくありません", "error");
+      return true;
+    }
+
+    const handled = confirmJoinSyncFromInvite(invite, { consumeInvite: () => {} });
+    if (handled) {
+      removeQueryParams([SYNC_QUERY_PARAM]);
+    }
+    return handled;
   }
 
   function handleIncomingSyncHash() {
@@ -3821,6 +3990,34 @@
       window.history.replaceState(null, "", pageBaseUrl());
     } catch (error) {
       location.hash = "";
+    }
+  }
+
+  function readQueryParam(name) {
+    if (!location.search) {
+      return null;
+    }
+    try {
+      const params = new URLSearchParams(location.search);
+      return params.has(name) ? params.get(name) : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function removeQueryParams(names) {
+    try {
+      const params = new URLSearchParams(location.search);
+      names.forEach((name) => params.delete(name));
+      const query = params.toString();
+      const nextUrl = `${pageBaseUrl()}${query ? `?${query}` : ""}${location.hash || ""}`;
+      window.history.replaceState(null, "", nextUrl);
+    } catch (error) {
+      try {
+        window.history.replaceState(null, "", `${pageBaseUrl()}${location.hash || ""}`);
+      } catch (innerError) {
+        // Nothing else to do; the app has already consumed the invite data.
+      }
     }
   }
 

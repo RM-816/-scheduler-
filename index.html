@@ -21,6 +21,8 @@
   <link id="appFavicon" rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
   <link rel="stylesheet" href="styles.css">
+  <script src="line-config.js"></script>
+  <script defer src="line.js"></script>
   <script defer src="holidays.js"></script>
   <script defer src="nlp.js"></script>
   <script defer src="ocr.js"></script>
@@ -123,6 +125,12 @@
             </span>
             <span class="setting-chevron" aria-hidden="true">&gt;</span>
           </button>
+          <div id="lineIntegrationRow" class="setting-row line-integration-row" hidden>
+            <span>
+              <strong>LINE連携</strong>
+              <small id="lineIntegrationStatus">LINE内で実行中</small>
+            </span>
+          </div>
           <section id="syncSection" class="sync-settings" aria-labelledby="syncSettingsTitle">
             <div class="sync-settings-header">
               <div>
