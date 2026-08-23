@@ -4,7 +4,9 @@
   const STORAGE_KEYS = {
     events: "scheduler.events",
     todos: "scheduler.todos",
-    settings: "scheduler.settings"
+    settings: "scheduler.settings",
+    tombstones: "scheduler.tombstones",
+    sync: "scheduler.sync"
   };
 
   const DEFAULT_CATEGORIES = [
@@ -40,6 +42,14 @@
   const SHARE_MEMO_MAX_LENGTH = 300;
   const SHARE_CATEGORY_LABEL_MAX_LENGTH = CATEGORY_LABEL_MAX_LENGTH;
   const SHARE_WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
+  const SYNC_HASH_PREFIX = "#sync=";
+  const SYNC_API_PATH = "/api/sync";
+  const SYNC_DEBOUNCE_MS = 2500;
+  const SYNC_INTERVAL_MS = 60000;
+  const SYNC_TOMBSTONE_MAX = 500;
+  const SYNC_TOMBSTONE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
+  const SYNC_DATA_LIMIT_BYTES = 256 * 1024;
+  const SYNC_EPOCH = "1970-01-01T00:00:00.000Z";
   const PERIOD_TIME_MODE_RANGES = {
     am: { startTime: "09:00", endTime: "12:00" },
     pm: { startTime: "13:00", endTime: "17:00" }
@@ -58,8 +68,12 @@
     editing: null,
     events: [],
     todos: [],
+    tombstones: { events: [], todos: [] },
     settings: defaultSettings(),
+    syncState: null,
+    syncServerStatus: "unknown",
     categoryPaletteFor: null,
+    syncLinkUrl: "",
     notificationTimer: null,
     lastNotificationCheckAt: null,
     importCandidates: [],
@@ -69,6 +83,7 @@
     voiceStopping: false,
     voiceBaseText: "",
     voiceFinalText: "",
+    choiceCancelAction: null,
     pendingSharedEvents: []
   };
 
@@ -82,21 +97,32 @@
   const CALENDAR_SLIDE_MS = 180;
   let monthResizeTimer = null;
   let wideLayoutMedia = null;
+  const syncRuntime = {
+    debounceTimer: null,
+    intervalTimer: null,
+    inFlight: false,
+    suppressLocalChange: false
+  };
   const calendarSlideTimers = new WeakMap();
 
   document.addEventListener("DOMContentLoaded", init);
 
   function init() {
     cacheElements();
+    state.syncState = loadSyncState();
+    state.tombstones = loadTombstones();
     state.settings = loadSettings();
     state.events = loadEvents();
     state.todos = loadTodos();
+    pruneAndSaveTombstones({ skipSync: true });
     migrateCategoriesIfNeeded();
     setupOptionalIcon();
     setupWideDayPanelLayout();
     bindEvents();
     renderAll();
     startNotificationTimer();
+    setupSyncEngine();
+    handleIncomingSyncHash();
     handleIncomingShareHash();
   }
 
@@ -143,6 +169,12 @@
     els.addCategoryButton = byId("addCategoryButton");
     els.clearDataButton = byId("clearDataButton");
     els.openHelpButton = byId("openHelpButton");
+    els.syncStatusText = byId("syncStatusText");
+    els.syncDescription = byId("syncDescription");
+    els.syncUnavailable = byId("syncUnavailable");
+    els.startSyncButton = byId("startSyncButton");
+    els.addSyncDeviceButton = byId("addSyncDeviceButton");
+    els.disconnectSyncButton = byId("disconnectSyncButton");
 
     els.importButton = byId("importButton");
     els.chatBar = byId("chatBar");
@@ -204,6 +236,12 @@
     els.shareLinkText = byId("shareLinkText");
     els.closeShareLinkModal = byId("closeShareLinkModal");
     els.closeShareLinkButton = byId("closeShareLinkButton");
+    els.syncLinkModal = byId("syncLinkModal");
+    els.syncLinkText = byId("syncLinkText");
+    els.closeSyncLinkModal = byId("closeSyncLinkModal");
+    els.copySyncLinkButton = byId("copySyncLinkButton");
+    els.shareSyncLinkButton = byId("shareSyncLinkButton");
+    els.closeSyncLinkButton = byId("closeSyncLinkButton");
     els.sharedEventsModal = byId("sharedEventsModal");
     els.sharedEventsList = byId("sharedEventsList");
     els.sharedEventsSummary = byId("sharedEventsSummary");
@@ -323,6 +361,9 @@
     els.addCategoryButton.addEventListener("click", handleAddCategory);
     els.clearDataButton.addEventListener("click", handleClearData);
     els.openHelpButton.addEventListener("click", openHelpModal);
+    els.startSyncButton.addEventListener("click", handleStartSync);
+    els.addSyncDeviceButton.addEventListener("click", openSyncLinkModal);
+    els.disconnectSyncButton.addEventListener("click", handleDisconnectSync);
 
     els.closeHelpModal.addEventListener("click", closeHelpModal);
     els.helpModal.addEventListener("click", (event) => {
@@ -333,7 +374,7 @@
 
     els.choiceModal.addEventListener("click", (event) => {
       if (event.target === els.choiceModal) {
-        closeChoiceModal();
+        closeChoiceModal({ runCancel: true });
       }
     });
 
@@ -342,6 +383,15 @@
     els.shareLinkModal.addEventListener("click", (event) => {
       if (event.target === els.shareLinkModal) {
         closeShareLinkModal();
+      }
+    });
+    els.closeSyncLinkModal.addEventListener("click", closeSyncLinkModal);
+    els.copySyncLinkButton.addEventListener("click", copySyncLink);
+    els.shareSyncLinkButton.addEventListener("click", shareSyncLink);
+    els.closeSyncLinkButton.addEventListener("click", closeSyncLinkModal);
+    els.syncLinkModal.addEventListener("click", (event) => {
+      if (event.target === els.syncLinkModal) {
+        closeSyncLinkModal();
       }
     });
     els.cancelSharedEventsButton.addEventListener("click", cancelSharedEvents);
@@ -380,8 +430,10 @@
         cancelSharedEvents();
       } else if (!els.shareLinkModal.hidden) {
         closeShareLinkModal();
+      } else if (!els.syncLinkModal.hidden) {
+        closeSyncLinkModal();
       } else if (!els.choiceModal.hidden) {
-        closeChoiceModal();
+        closeChoiceModal({ runCancel: true });
       } else if (!els.importModal.hidden) {
         closeImportModal();
       } else if (!els.eventModal.hidden) {
@@ -392,6 +444,7 @@
     });
 
     document.addEventListener("click", handleDocumentClick);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("resize", scheduleMonthResizeRender);
     window.addEventListener("orientationchange", scheduleMonthResizeRender);
   }
@@ -994,6 +1047,7 @@
       checkbox.setAttribute("aria-label", "完了");
       checkbox.addEventListener("change", () => {
         todo.done = checkbox.checked;
+        todo.updatedAt = new Date().toISOString();
         saveTodos();
         renderTodos();
       });
@@ -1008,6 +1062,7 @@
       deleteButton.setAttribute("aria-label", "削除");
       deleteButton.textContent = "×";
       deleteButton.addEventListener("click", () => {
+        addTombstone("todos", todo.id);
         state.todos = state.todos.filter((item) => item.id !== todo.id);
         saveTodos();
         renderTodos();
@@ -1024,7 +1079,41 @@
     els.notificationToggle.checked = Boolean(state.settings.notifications);
     setReminderControlValue(els.defaultReminderSelect, els.defaultReminderCustom, state.settings.defaultReminder);
     setDefaultReminderDisabled(!state.settings.notifications);
+    renderSyncSettings();
     renderCategorySettings();
+  }
+
+  function renderSyncSettings() {
+    const configured = Boolean(state.syncState && state.syncState.id && state.syncState.key);
+    const unavailable = state.syncServerStatus === "unavailable" || !isSyncTransportUsable();
+    els.syncUnavailable.hidden = !unavailable;
+
+    if (configured) {
+      const lastSyncText = formatSyncLastSyncAt(state.syncState.lastSyncAt);
+      els.syncStatusText.textContent = `同期中 ✓${lastSyncText ? `（最終同期 ${lastSyncText}）` : ""}`;
+      els.syncDescription.textContent = "別の端末を追加すると、この端末の予定・ToDo・カテゴリと自動で統合されます。";
+      els.startSyncButton.hidden = true;
+      els.addSyncDeviceButton.hidden = false;
+      els.disconnectSyncButton.hidden = false;
+      els.addSyncDeviceButton.disabled = unavailable;
+      els.disconnectSyncButton.disabled = false;
+      return;
+    }
+
+    els.syncStatusText.textContent = "";
+    els.syncDescription.textContent = "同期コードを作ると、ほかの端末と予定・ToDo・カテゴリを自動で同期できます";
+    els.startSyncButton.hidden = false;
+    els.addSyncDeviceButton.hidden = true;
+    els.disconnectSyncButton.hidden = true;
+    els.startSyncButton.disabled = unavailable || state.syncServerStatus === "unknown";
+  }
+
+  function formatSyncLastSyncAt(value) {
+    if (!isValidIsoDate(value)) {
+      return "";
+    }
+    const date = new Date(value);
+    return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
   }
 
   function renderEventColorOptions() {
@@ -1184,7 +1273,7 @@
       return;
     }
     state.settings.defaultReminder = value;
-    saveSettings();
+    saveSyncedSettings();
   }
 
   function handleDefaultReminderCustomInput() {
@@ -1196,7 +1285,7 @@
       return;
     }
     state.settings.defaultReminder = value;
-    saveSettings();
+    saveSyncedSettings();
   }
 
   function setDefaultReminderDisabled(disabled) {
@@ -1377,7 +1466,7 @@
       const color = normalizeHexColor(paletteButton.dataset.color);
       if (category && color && category.color !== color) {
         category.color = color;
-        saveSettings();
+        saveSyncedSettings();
         renderCategoryDependents();
       }
       state.categoryPaletteFor = null;
@@ -1426,7 +1515,7 @@
       return;
     }
     category.label = nextLabel;
-    saveSettings();
+    saveSyncedSettings();
     renderInactiveCategoryEditors(input);
     renderCategoryDependents();
   }
@@ -1446,7 +1535,7 @@
       const previousLabel = normalizeCategoryLabel(input.dataset.previousLabel) || category.label;
       if (category.label !== previousLabel) {
         category.label = previousLabel;
-        saveSettings();
+        saveSyncedSettings();
         renderInactiveCategoryEditors(input);
         renderCategoryDependents();
       }
@@ -1456,7 +1545,7 @@
 
     if (category.label !== nextLabel) {
       category.label = nextLabel;
-      saveSettings();
+      saveSyncedSettings();
       renderInactiveCategoryEditors(input);
       renderCategoryDependents();
     }
@@ -1493,7 +1582,7 @@
     };
     categories.push(category);
     state.categoryPaletteFor = null;
-    saveSettings();
+    saveSyncedSettings();
     renderCategoryEditors(category.key);
     renderCategoryDependents();
   }
@@ -1521,6 +1610,7 @@
       state.events.forEach((event) => {
         if (event.color === key) {
           event.color = fallback.key;
+          event.updatedAt = new Date().toISOString();
         }
       });
       saveEvents();
@@ -1531,7 +1621,7 @@
     if (els.eventColor.value === key) {
       els.eventColor.value = fallback.key;
     }
-    saveSettings();
+    saveSyncedSettings();
     renderCategoryEditors();
     renderCategoryDependents();
   }
@@ -2130,9 +2220,11 @@
       return;
     }
 
+    const updatedAt = new Date().toISOString();
     const additions = indexes.map((index) => ({
       id: createId("evt"),
       ...state.pendingSharedEvents[index].event,
+      updatedAt,
       exceptions: []
     }));
     state.events.push(...additions);
@@ -2205,6 +2297,7 @@
       return;
     }
 
+    const updatedAt = new Date().toISOString();
     if (state.editing) {
       const index = state.events.findIndex((item) => item.id === state.editing.id);
       if (index === -1) {
@@ -2216,12 +2309,14 @@
       state.events[index] = {
         ...previous,
         ...eventData,
+        updatedAt,
         exceptions: eventData.recurrence ? sanitizeExceptions(previous.exceptions) : []
       };
     } else {
       state.events.push({
         id: createId("evt"),
         ...eventData,
+        updatedAt,
         exceptions: []
       });
     }
@@ -2347,6 +2442,7 @@
       exceptions.push(dateStr);
     }
     event.exceptions = exceptions;
+    event.updatedAt = new Date().toISOString();
     saveEvents();
     closeChoiceModal();
     closeEventModal();
@@ -2354,6 +2450,7 @@
   }
 
   function deleteWholeEvent(eventId) {
+    addTombstone("events", eventId);
     state.events = state.events.filter((item) => item.id !== eventId);
     saveEvents();
     closeChoiceModal();
@@ -2797,6 +2894,7 @@
       memo: "",
       reminder: timeMode !== "allday" && startTime ? state.settings.defaultReminder : null,
       recurrence: normalizeRecurrence(parsed.recurrence, parsed.date),
+      updatedAt: new Date().toISOString(),
       exceptions: []
     };
   }
@@ -2822,11 +2920,13 @@
     if (!title) {
       return;
     }
+    const now = new Date().toISOString();
     state.todos.push({
       id: createId("todo"),
       title,
       done: false,
-      createdAt: new Date().toISOString()
+      createdAt: now,
+      updatedAt: now
     });
     els.todoInput.value = "";
     saveTodos();
@@ -2861,24 +2961,625 @@
     if (!window.confirm("保存済みの予定、ToDo、設定をすべて削除しますか？")) {
       return;
     }
+    const deletedAt = new Date().toISOString();
+    state.events.forEach((event) => addTombstone("events", event.id, deletedAt, { skipSave: true }));
+    state.todos.forEach((todo) => addTombstone("todos", todo.id, deletedAt, { skipSave: true }));
     state.events = [];
     state.todos = [];
     state.settings = defaultSettings();
-    try {
-      window.localStorage.removeItem(STORAGE_KEYS.events);
-      window.localStorage.removeItem(STORAGE_KEYS.todos);
-      window.localStorage.removeItem(STORAGE_KEYS.settings);
-    } catch (error) {
-      saveEvents();
-      saveTodos();
-      saveSettings();
-    }
+    state.settings.categoriesUpdatedAt = deletedAt;
+    saveTombstones();
+    saveEvents();
+    saveTodos();
+    saveSyncedSettings({ touchedAt: deletedAt });
     startNotificationTimer();
     closeDayPanel();
     closeEventModal();
     closeChoiceModal();
     renderAll();
     showToast("データを削除しました");
+  }
+
+  function setupSyncEngine() {
+    if (!isSyncTransportUsable()) {
+      state.syncServerStatus = "unavailable";
+      renderSyncSettings();
+      return;
+    }
+
+    probeSyncServerAvailability();
+    if (state.syncState) {
+      runSyncCycle({ reason: "startup" });
+    }
+    syncRuntime.intervalTimer = window.setInterval(() => {
+      if (state.syncState) {
+        runSyncCycle({ reason: "interval" });
+      }
+    }, SYNC_INTERVAL_MS);
+  }
+
+  function handleVisibilityChange() {
+    if (document.visibilityState !== "visible") {
+      return;
+    }
+    if (state.syncState) {
+      runSyncCycle({ reason: "visible" });
+    } else if (state.syncServerStatus !== "available") {
+      probeSyncServerAvailability();
+    }
+  }
+
+  function isSyncTransportUsable() {
+    if (location.protocol !== "http:" && location.protocol !== "https:") {
+      return false;
+    }
+    if (window.__schedulerAllowLocalSyncApi === true) {
+      return true;
+    }
+    return location.hostname !== "localhost" &&
+      location.hostname !== "127.0.0.1" &&
+      location.hostname !== "::1";
+  }
+
+  async function probeSyncServerAvailability() {
+    if (!isSyncTransportUsable()) {
+      state.syncServerStatus = "unavailable";
+      renderSyncSettings();
+      return false;
+    }
+
+    try {
+      const response = await fetch(`${SYNC_API_PATH}?id=__probe__&key=__probe__`, {
+        cache: "no-store"
+      });
+      const contentType = response.headers.get("content-type") || "";
+      const payload = contentType.includes("application/json")
+        ? await response.json().catch(() => null)
+        : null;
+      state.syncServerStatus = response.status === 404 && payload && payload.error
+        ? "available"
+        : (response.ok ? "available" : "unavailable");
+      if (response.status === 503 && payload && payload.error === "storage_not_configured") {
+        state.syncServerStatus = "unavailable";
+      }
+    } catch (error) {
+      state.syncServerStatus = "unavailable";
+    }
+
+    renderSyncSettings();
+    return state.syncServerStatus === "available";
+  }
+
+  async function ensureSyncServerAvailable() {
+    if (!isSyncTransportUsable()) {
+      state.syncServerStatus = "unavailable";
+      renderSyncSettings();
+      return false;
+    }
+    if (state.syncServerStatus === "available") {
+      return true;
+    }
+    return probeSyncServerAvailability();
+  }
+
+  async function handleStartSync() {
+    if (!await ensureSyncServerAvailable()) {
+      renderSyncSettings();
+      return;
+    }
+
+    els.startSyncButton.disabled = true;
+    try {
+      const data = createLocalSyncData();
+      if (syncDataByteLength(data) > SYNC_DATA_LIMIT_BYTES) {
+        showToast("同期データが大きすぎます", "error");
+        return;
+      }
+      const payload = await syncApiRequest("", {
+        method: "POST",
+        body: {
+          action: "create",
+          data
+        }
+      });
+      if (!payload || !isValidSyncToken(payload.id) || !isValidSyncToken(payload.key) || payload.rev !== 1) {
+        throw new Error("invalid sync create response");
+      }
+      state.syncState = {
+        id: payload.id,
+        key: payload.key,
+        lastSyncAt: new Date().toISOString()
+      };
+      saveSyncState();
+      state.syncServerStatus = "available";
+      renderSyncSettings();
+      showToast("同期を開始しました");
+    } catch (error) {
+      handleSyncUiError(error, "同期を開始できませんでした");
+    } finally {
+      renderSyncSettings();
+    }
+  }
+
+  function openSyncLinkModal() {
+    if (!state.syncState) {
+      return;
+    }
+    state.syncLinkUrl = createSyncInviteUrl(state.syncState);
+    els.syncLinkText.value = state.syncLinkUrl;
+    els.shareSyncLinkButton.disabled = !(navigator.share && typeof navigator.share === "function");
+    els.syncLinkModal.hidden = false;
+    window.setTimeout(() => {
+      els.syncLinkText.focus();
+      els.syncLinkText.select();
+    }, 0);
+  }
+
+  function closeSyncLinkModal() {
+    els.syncLinkModal.hidden = true;
+    els.syncLinkText.value = "";
+    state.syncLinkUrl = "";
+  }
+
+  async function copySyncLink() {
+    const url = state.syncLinkUrl || els.syncLinkText.value;
+    if (!url) {
+      return;
+    }
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      try {
+        await navigator.clipboard.writeText(url);
+        showToast("同期リンクをコピーしました");
+        return;
+      } catch (error) {
+        // Fall through to selectable text.
+      }
+    }
+    els.syncLinkText.focus();
+    els.syncLinkText.select();
+    showToast("リンクを選択しました");
+  }
+
+  async function shareSyncLink() {
+    const url = state.syncLinkUrl || els.syncLinkText.value;
+    if (!url || !(navigator.share && typeof navigator.share === "function")) {
+      return;
+    }
+    try {
+      await navigator.share({
+        title: "schedulerの同期",
+        text: "このリンクを開くと、この端末の予定・ToDo・カテゴリと同期できます。",
+        url
+      });
+    } catch (error) {
+      if (!error || error.name !== "AbortError") {
+        showToast("共有を開始できませんでした", "error");
+      }
+    }
+  }
+
+  function createSyncInviteUrl(syncState) {
+    return `${pageBaseUrl()}${SYNC_HASH_PREFIX}${syncState.id}.${syncState.key}`;
+  }
+
+  function handleDisconnectSync() {
+    if (!state.syncState) {
+      return;
+    }
+    if (!window.confirm("この端末を同期から切り離します。データはこの端末に残ります。")) {
+      return;
+    }
+    state.syncState = null;
+    saveSyncState();
+    if (syncRuntime.debounceTimer) {
+      window.clearTimeout(syncRuntime.debounceTimer);
+      syncRuntime.debounceTimer = null;
+    }
+    renderSyncSettings();
+    showToast("同期を解除しました");
+  }
+
+  function handleIncomingSyncHash() {
+    if (!location.hash || !location.hash.startsWith(SYNC_HASH_PREFIX)) {
+      return false;
+    }
+    const invite = parseSyncInviteHash(location.hash);
+    if (!invite) {
+      removeCurrentHash();
+      showToast("同期リンクが正しくありません", "error");
+      return true;
+    }
+
+    showChoice({
+      title: "同期に参加",
+      message: "この端末を同期に参加させますか？この端末の予定と統合されます",
+      actions: [
+        {
+          label: "参加する",
+          className: "primary-button",
+          onClick: () => {
+            closeChoiceModal();
+            removeCurrentHash();
+            joinSyncFromInvite(invite);
+          }
+        }
+      ],
+      onCancel: removeCurrentHash
+    });
+    return true;
+  }
+
+  function parseSyncInviteHash(hash) {
+    const value = hash.slice(SYNC_HASH_PREFIX.length);
+    const parts = value.split(".");
+    if (parts.length !== 2 || !isValidSyncToken(parts[0]) || !isValidSyncToken(parts[1])) {
+      return null;
+    }
+    return {
+      id: parts[0],
+      key: parts[1]
+    };
+  }
+
+  async function joinSyncFromInvite(invite) {
+    if (!await ensureSyncServerAvailable()) {
+      showToast("同期サーバーが未設定のため利用できません", "error");
+      renderSyncSettings();
+      return;
+    }
+
+    try {
+      await pullMergePush(invite, { forcePut: true, retryOnce: true });
+      state.syncState = {
+        id: invite.id,
+        key: invite.key,
+        lastSyncAt: new Date().toISOString()
+      };
+      saveSyncState();
+      state.syncServerStatus = "available";
+      renderAll();
+      showToast("同期に参加しました");
+    } catch (error) {
+      handleSyncUiError(error, "同期に参加できませんでした");
+    }
+  }
+
+  function scheduleSyncAfterLocalChange(options) {
+    if (syncRuntime.suppressLocalChange || (options && options.skipSync)) {
+      return;
+    }
+    if (!state.syncState) {
+      return;
+    }
+    if (syncRuntime.debounceTimer) {
+      window.clearTimeout(syncRuntime.debounceTimer);
+    }
+    syncRuntime.debounceTimer = window.setTimeout(() => {
+      syncRuntime.debounceTimer = null;
+      runSyncCycle({ reason: "debounce" });
+    }, SYNC_DEBOUNCE_MS);
+  }
+
+  async function runSyncCycle(options) {
+    if (!state.syncState || !isSyncTransportUsable()) {
+      return;
+    }
+    if (syncRuntime.inFlight) {
+      return;
+    }
+
+    syncRuntime.inFlight = true;
+    try {
+      await pullMergePush(state.syncState, {
+        forcePut: Boolean(options && options.forcePut),
+        retryOnce: true
+      });
+      state.syncState.lastSyncAt = new Date().toISOString();
+      saveSyncState();
+      state.syncServerStatus = "available";
+    } catch (error) {
+      handleSyncBackgroundError(error);
+    } finally {
+      syncRuntime.inFlight = false;
+      renderSyncSettings();
+    }
+  }
+
+  async function pullMergePush(credentials, options) {
+    const remote = await getSyncRemoteData(credentials);
+    try {
+      await mergeRemoteAndMaybePut(credentials, remote, Boolean(options && options.forcePut));
+      return;
+    } catch (error) {
+      if (!error || error.status !== 409 || !(options && options.retryOnce)) {
+        throw error;
+      }
+    }
+
+    const latest = await getSyncRemoteData(credentials);
+    await mergeRemoteAndMaybePut(credentials, latest, true);
+  }
+
+  async function mergeRemoteAndMaybePut(credentials, remotePayload, forcePut) {
+    const localData = createLocalSyncData();
+    const remoteData = normalizeSyncData(remotePayload.data);
+    const merged = mergeSyncData(localData, remoteData);
+    if (!syncDataEqual(localData, merged)) {
+      applySyncDataToState(merged);
+    }
+    if (!forcePut && syncDataEqual(remoteData, merged)) {
+      return;
+    }
+    if (syncDataByteLength(merged) > SYNC_DATA_LIMIT_BYTES) {
+      throw new Error("sync data too large");
+    }
+    await putSyncRemoteData(credentials, merged, remotePayload.rev);
+  }
+
+  async function getSyncRemoteData(credentials) {
+    const payload = await syncApiRequest(`?id=${encodeURIComponent(credentials.id)}&key=${encodeURIComponent(credentials.key)}`, {
+      method: "GET"
+    });
+    if (!payload || !Number.isInteger(payload.rev)) {
+      throw new Error("invalid sync get response");
+    }
+    return {
+      data: normalizeSyncData(payload.data),
+      rev: payload.rev
+    };
+  }
+
+  async function putSyncRemoteData(credentials, data, rev) {
+    const payload = await syncApiRequest("", {
+      method: "POST",
+      body: {
+        action: "put",
+        id: credentials.id,
+        key: credentials.key,
+        data,
+        rev
+      }
+    });
+    if (!payload || !Number.isInteger(payload.rev)) {
+      throw new Error("invalid sync put response");
+    }
+    return payload;
+  }
+
+  async function syncApiRequest(query, options) {
+    const requestOptions = {
+      method: options.method || "GET",
+      cache: "no-store",
+      headers: {}
+    };
+    if (Object.prototype.hasOwnProperty.call(options, "body")) {
+      requestOptions.headers["Content-Type"] = "application/json";
+      requestOptions.body = JSON.stringify(options.body);
+    }
+    const response = await fetch(`${SYNC_API_PATH}${query}`, requestOptions);
+    const payload = await readSyncJsonResponse(response);
+    if (!response.ok) {
+      if (response.status === 503 && payload && payload.error === "storage_not_configured") {
+        state.syncServerStatus = "unavailable";
+        renderSyncSettings();
+      }
+      const error = new Error(payload && payload.error ? payload.error : `sync request failed: ${response.status}`);
+      error.status = response.status;
+      error.payload = payload;
+      throw error;
+    }
+    state.syncServerStatus = "available";
+    return payload;
+  }
+
+  async function readSyncJsonResponse(response) {
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.includes("application/json")) {
+      return null;
+    }
+    try {
+      return await response.json();
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function handleSyncUiError(error, fallbackMessage) {
+    if (isSyncUnavailableError(error)) {
+      state.syncServerStatus = "unavailable";
+      renderSyncSettings();
+      showToast("同期サーバーが未設定のため利用できません", "error");
+      return;
+    }
+    showToast(fallbackMessage, "error");
+    console.warn("Sync failed:", error && error.message ? error.message : error);
+  }
+
+  function handleSyncBackgroundError(error) {
+    if (isSyncUnavailableError(error)) {
+      state.syncServerStatus = "unavailable";
+    }
+    console.warn("Sync failed:", error && error.message ? error.message : error);
+  }
+
+  function isSyncUnavailableError(error) {
+    return !error ||
+      error.name === "TypeError" ||
+      error.status === 503 ||
+      (error.payload && error.payload.error === "storage_not_configured");
+  }
+
+  function createLocalSyncData() {
+    return normalizeSyncData({
+      events: state.events,
+      todos: state.todos,
+      tombstones: state.tombstones,
+      settings: {
+        categories: state.settings.categories,
+        defaultReminder: state.settings.defaultReminder,
+        categoriesUpdatedAt: state.settings.categoriesUpdatedAt
+      }
+    });
+  }
+
+  function applySyncDataToState(data) {
+    const normalized = normalizeSyncData(data);
+    syncRuntime.suppressLocalChange = true;
+    try {
+      state.events = normalized.events;
+      state.todos = normalized.todos;
+      state.tombstones = normalized.tombstones;
+      state.settings = {
+        ...state.settings,
+        defaultReminder: normalized.settings.defaultReminder,
+        categories: normalized.settings.categories,
+        categoriesUpdatedAt: normalized.settings.categoriesUpdatedAt
+      };
+      saveEvents();
+      saveTodos();
+      saveTombstones();
+      saveSettings();
+    } finally {
+      syncRuntime.suppressLocalChange = false;
+    }
+    startNotificationTimer();
+    renderAll();
+  }
+
+  function mergeSyncData(local, remote) {
+    const localData = normalizeSyncData(local);
+    const remoteData = normalizeSyncData(remote);
+    const tombstones = mergeSyncTombstones(localData.tombstones, remoteData.tombstones);
+    const settings = compareIsoDateStrings(localData.settings.categoriesUpdatedAt, remoteData.settings.categoriesUpdatedAt) >= 0
+      ? localData.settings
+      : remoteData.settings;
+
+    return normalizeSyncData({
+      events: mergeSyncRecords(localData.events, remoteData.events, tombstones.events),
+      todos: mergeSyncRecords(localData.todos, remoteData.todos, tombstones.todos),
+      tombstones,
+      settings
+    });
+  }
+
+  function mergeSyncRecords(localRecords, remoteRecords, tombstones) {
+    const byId = new Map();
+    localRecords.concat(remoteRecords).forEach((record) => {
+      const previous = byId.get(record.id);
+      if (!previous || compareIsoDateStrings(record.updatedAt, previous.updatedAt) > 0) {
+        byId.set(record.id, record);
+      }
+    });
+
+    const tombstoneById = new Map(tombstones.map((item) => [item.id, item]));
+    return Array.from(byId.values())
+      .filter((record) => {
+        const tombstone = tombstoneById.get(record.id);
+        return !tombstone || compareIsoDateStrings(tombstone.deletedAt, record.updatedAt) <= 0;
+      })
+      .sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  function mergeSyncTombstones(localTombstones, remoteTombstones) {
+    return {
+      events: mergeSyncTombstoneLists(localTombstones.events, remoteTombstones.events),
+      todos: mergeSyncTombstoneLists(localTombstones.todos, remoteTombstones.todos)
+    };
+  }
+
+  function mergeSyncTombstoneLists(localList, remoteList) {
+    return normalizeTombstoneList(localList.concat(remoteList));
+  }
+
+  function normalizeSyncData(data) {
+    const source = data && typeof data === "object" && !Array.isArray(data) ? data : {};
+    return {
+      events: normalizeSyncEvents(source.events),
+      todos: normalizeSyncTodos(source.todos),
+      tombstones: pruneTombstones(source.tombstones),
+      settings: normalizeSyncSettings(source.settings)
+    };
+  }
+
+  function normalizeSyncEvents(value) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    const byId = new Map();
+    value.forEach((item) => {
+      const event = normalizeEvent(item);
+      if (!event) {
+        return;
+      }
+      const previous = byId.get(event.id);
+      if (!previous || compareIsoDateStrings(event.updatedAt, previous.updatedAt) >= 0) {
+        byId.set(event.id, event);
+      }
+    });
+    return Array.from(byId.values()).sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  function normalizeSyncTodos(value) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    const byId = new Map();
+    value.forEach((item) => {
+      const todo = normalizeTodo(item);
+      if (!todo) {
+        return;
+      }
+      const previous = byId.get(todo.id);
+      if (!previous || compareIsoDateStrings(todo.updatedAt, previous.updatedAt) >= 0) {
+        byId.set(todo.id, todo);
+      }
+    });
+    return Array.from(byId.values()).sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  function normalizeSyncSettings(value) {
+    const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    return {
+      categories: normalizeCategories(source.categories),
+      defaultReminder: normalizeReminderValue(
+        Object.prototype.hasOwnProperty.call(source, "defaultReminder") ? source.defaultReminder : undefined,
+        DEFAULT_REMINDER_MINUTES
+      ),
+      categoriesUpdatedAt: isValidIsoDate(source.categoriesUpdatedAt) ? source.categoriesUpdatedAt : SYNC_EPOCH
+    };
+  }
+
+  function syncDataEqual(left, right) {
+    return JSON.stringify(normalizeSyncData(left)) === JSON.stringify(normalizeSyncData(right));
+  }
+
+  function syncDataByteLength(data) {
+    const json = JSON.stringify(data);
+    if (typeof TextEncoder === "function") {
+      return new TextEncoder().encode(json).length;
+    }
+    return json.length;
+  }
+
+  function compareIsoDateStrings(left, right) {
+    const a = isValidIsoDate(left) ? left : SYNC_EPOCH;
+    const b = isValidIsoDate(right) ? right : SYNC_EPOCH;
+    if (a === b) {
+      return 0;
+    }
+    return a > b ? 1 : -1;
+  }
+
+  function isValidSyncToken(value) {
+    return typeof value === "string" && /^[A-Za-z0-9_-]{8,128}$/.test(value);
+  }
+
+  function removeCurrentHash() {
+    try {
+      window.history.replaceState(null, "", pageBaseUrl());
+    } catch (error) {
+      location.hash = "";
+    }
   }
 
   function getOccurrencesForDate(dateStr) {
@@ -3311,6 +4012,7 @@
   }
 
   function showChoice(config) {
+    state.choiceCancelAction = typeof config.onCancel === "function" ? config.onCancel : null;
     els.choiceTitle.textContent = config.title;
     els.choiceMessage.textContent = config.message;
     const buttons = config.actions.map((action) => {
@@ -3326,16 +4028,21 @@
     cancel.type = "button";
     cancel.className = "secondary-button";
     cancel.textContent = "キャンセル";
-    cancel.addEventListener("click", closeChoiceModal);
+    cancel.addEventListener("click", () => closeChoiceModal({ runCancel: true }));
     buttons.push(cancel);
 
     els.choiceActions.replaceChildren(...buttons);
     els.choiceModal.hidden = false;
   }
 
-  function closeChoiceModal() {
+  function closeChoiceModal(options) {
+    const cancelAction = state.choiceCancelAction;
+    state.choiceCancelAction = null;
     els.choiceModal.hidden = true;
     els.choiceActions.replaceChildren();
+    if (options && options.runCancel && cancelAction) {
+      cancelAction();
+    }
   }
 
   function showToast(message, type) {
@@ -3398,6 +4105,7 @@
       state.events.forEach((event) => {
         if (event.color === "health") {
           event.color = "exercise";
+          event.updatedAt = new Date().toISOString();
           eventsChanged = true;
         }
       });
@@ -3411,7 +4119,7 @@
     }
 
     if (settingsChanged) {
-      saveSettings();
+      saveSyncedSettings();
     }
     if (eventsChanged) {
       saveEvents();
@@ -3424,6 +4132,7 @@
     state.events.forEach((event) => {
       if (!isKnownCategoryKey(event.color)) {
         event.color = fallbackKey;
+        event.updatedAt = new Date().toISOString();
         changed = true;
       }
     });
@@ -3601,7 +4310,8 @@
         item.timeMode !== event.timeMode ||
         item.startTime !== event.startTime ||
         item.endTime !== event.endTime ||
-        item.reminder !== event.reminder
+        item.reminder !== event.reminder ||
+        item.updatedAt !== event.updatedAt
       )) {
         changed = true;
       }
@@ -3656,6 +4366,7 @@
       memo: typeof item.memo === "string" ? item.memo : "",
       reminder,
       recurrence: normalizeRecurrence(item.recurrence, date),
+      updatedAt: isValidIsoDate(item.updatedAt) ? item.updatedAt : new Date().toISOString(),
       exceptions: sanitizeExceptions(item.exceptions)
     };
   }
@@ -3695,7 +4406,24 @@
     if (!Array.isArray(raw)) {
       return [];
     }
-    return raw.map(normalizeTodo).filter(Boolean);
+    let changed = false;
+    const todos = raw.map((item) => {
+      const todo = normalizeTodo(item);
+      if (todo && item && typeof item === "object" && item.updatedAt !== todo.updatedAt) {
+        changed = true;
+      }
+      return todo;
+    }).filter((todo) => {
+      if (!todo) {
+        changed = true;
+        return false;
+      }
+      return true;
+    });
+    if (changed) {
+      saveJson(STORAGE_KEYS.todos, todos);
+    }
+    return todos;
   }
 
   function normalizeTodo(item) {
@@ -3710,7 +4438,8 @@
       id: typeof item.id === "string" && item.id ? item.id : createId("todo"),
       title,
       done: Boolean(item.done),
-      createdAt: typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString()
+      createdAt: isValidIsoDate(item.createdAt) ? item.createdAt : new Date().toISOString(),
+      updatedAt: isValidIsoDate(item.updatedAt) ? item.updatedAt : new Date().toISOString()
     };
   }
 
@@ -3721,6 +4450,7 @@
       welcomeDismissed: false,
       notified: {},
       categories: cloneDefaultCategories(),
+      categoriesUpdatedAt: new Date().toISOString(),
       [CATEGORY_MIGRATION_FLAG]: false
     };
   }
@@ -3748,6 +4478,12 @@
       changed = true;
     }
     settings.categories = normalizeCategories(raw.categories);
+    settings.categoriesUpdatedAt = isValidIsoDate(raw.categoriesUpdatedAt)
+      ? raw.categoriesUpdatedAt
+      : new Date().toISOString();
+    if (raw.categoriesUpdatedAt !== settings.categoriesUpdatedAt) {
+      changed = true;
+    }
     settings[CATEGORY_MIGRATION_FLAG] = Boolean(raw[CATEGORY_MIGRATION_FLAG]);
     if (raw.notified && typeof raw.notified === "object" && !Array.isArray(raw.notified)) {
       Object.keys(raw.notified).forEach((key) => {
@@ -3774,16 +4510,134 @@
     }
   }
 
-  function saveEvents() {
+  function loadTombstones() {
+    return normalizeTombstones(safeReadJson(STORAGE_KEYS.tombstones, null));
+  }
+
+  function normalizeTombstones(value) {
+    const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    return {
+      events: normalizeTombstoneList(source.events),
+      todos: normalizeTombstoneList(source.todos)
+    };
+  }
+
+  function normalizeTombstoneList(value) {
+    const byId = new Map();
+    if (Array.isArray(value)) {
+      value.forEach((item) => {
+        if (!item || typeof item !== "object") {
+          return;
+        }
+        const id = typeof item.id === "string" ? item.id : "";
+        const deletedAt = isValidIsoDate(item.deletedAt) ? item.deletedAt : "";
+        if (!id || !deletedAt) {
+          return;
+        }
+        const previous = byId.get(id);
+        if (!previous || deletedAt > previous.deletedAt) {
+          byId.set(id, { id, deletedAt });
+        }
+      });
+    }
+    return Array.from(byId.values())
+      .sort((a, b) => b.deletedAt.localeCompare(a.deletedAt))
+      .slice(0, SYNC_TOMBSTONE_MAX);
+  }
+
+  function addTombstone(kind, id, deletedAt, options) {
+    if ((kind !== "events" && kind !== "todos") || typeof id !== "string" || !id) {
+      return;
+    }
+    const timestamp = isValidIsoDate(deletedAt) ? deletedAt : new Date().toISOString();
+    const list = Array.isArray(state.tombstones[kind]) ? state.tombstones[kind] : [];
+    const existing = list.find((item) => item.id === id);
+    if (existing) {
+      if (timestamp > existing.deletedAt) {
+        existing.deletedAt = timestamp;
+      }
+    } else {
+      list.push({ id, deletedAt: timestamp });
+    }
+    state.tombstones[kind] = normalizeTombstoneList(list);
+    if (!options || !options.skipSave) {
+      saveTombstones();
+    }
+  }
+
+  function pruneAndSaveTombstones(options) {
+    const next = pruneTombstones(state.tombstones);
+    if (!syncDataEqual({ tombstones: state.tombstones }, { tombstones: next })) {
+      state.tombstones = next;
+      saveTombstones(options);
+    }
+  }
+
+  function pruneTombstones(tombstones) {
+    const cutoff = new Date(Date.now() - SYNC_TOMBSTONE_MAX_AGE_MS).toISOString();
+    const normalized = normalizeTombstones(tombstones);
+    return {
+      events: normalized.events.filter((item) => item.deletedAt >= cutoff).slice(0, SYNC_TOMBSTONE_MAX),
+      todos: normalized.todos.filter((item) => item.deletedAt >= cutoff).slice(0, SYNC_TOMBSTONE_MAX)
+    };
+  }
+
+  function saveTombstones(options) {
+    state.tombstones = pruneTombstones(state.tombstones);
+    saveJson(STORAGE_KEYS.tombstones, state.tombstones);
+    scheduleSyncAfterLocalChange(options);
+  }
+
+  function loadSyncState() {
+    const raw = safeReadJson(STORAGE_KEYS.sync, null);
+    if (!raw || typeof raw !== "object") {
+      return null;
+    }
+    const id = typeof raw.id === "string" ? raw.id : "";
+    const key = typeof raw.key === "string" ? raw.key : "";
+    if (!isValidSyncToken(id) || !isValidSyncToken(key)) {
+      return null;
+    }
+    return {
+      id,
+      key,
+      lastSyncAt: isValidIsoDate(raw.lastSyncAt) ? raw.lastSyncAt : ""
+    };
+  }
+
+  function saveSyncState() {
+    if (!state.syncState) {
+      try {
+        window.localStorage.removeItem(STORAGE_KEYS.sync);
+      } catch (error) {
+        // Nothing else to do; sync can be reconfigured from this device.
+      }
+      return;
+    }
+    saveJson(STORAGE_KEYS.sync, state.syncState);
+  }
+
+  function saveEvents(options) {
     saveJson(STORAGE_KEYS.events, state.events);
+    scheduleSyncAfterLocalChange(options);
   }
 
-  function saveTodos() {
+  function saveTodos(options) {
     saveJson(STORAGE_KEYS.todos, state.todos);
+    scheduleSyncAfterLocalChange(options);
   }
 
-  function saveSettings() {
+  function saveSettings(options) {
     saveJson(STORAGE_KEYS.settings, state.settings);
+    if (options && options.sync) {
+      scheduleSyncAfterLocalChange(options);
+    }
+  }
+
+  function saveSyncedSettings(options) {
+    const touchedAt = options && isValidIsoDate(options.touchedAt) ? options.touchedAt : new Date().toISOString();
+    state.settings.categoriesUpdatedAt = touchedAt;
+    saveSettings({ sync: true });
   }
 
   function saveJson(key, value) {
@@ -3888,6 +4742,10 @@
     return Boolean(parseDate(value));
   }
 
+  function isValidIsoDate(value) {
+    return typeof value === "string" && value.trim() === value && !Number.isNaN(Date.parse(value));
+  }
+
   function isValidTimeString(value) {
     return typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
   }
@@ -3917,6 +4775,120 @@
 
   function validMonthDay(value) {
     return Number.isInteger(value) && value >= 1 && value <= 31;
+  }
+
+  window.__syncSelfTest = function __syncSelfTest() {
+    const base = Date.now();
+    const t1 = new Date(base - 3000).toISOString();
+    const t2 = new Date(base - 2000).toISOString();
+    const t3 = new Date(base - 1000).toISOString();
+    const eventA1 = testEvent("evt_a", "older", t1);
+    const eventA2 = testEvent("evt_a", "newer", t2);
+    const todoA1 = testTodo("todo_a", "local todo", false, t1);
+    const todoA2 = testTodo("todo_a", "remote todo", true, t2);
+    const categoriesA = [{ key: "work", label: "仕事", color: "#3B82F6" }];
+    const categoriesB = [{ key: "home", label: "家", color: "#22C55E" }];
+    const tests = [
+      {
+        name: "local newer event wins",
+        run: () => mergeSyncData({ events: [eventA2] }, { events: [eventA1] }).events[0].title === "newer"
+      },
+      {
+        name: "remote newer event wins",
+        run: () => mergeSyncData({ events: [eventA1] }, { events: [eventA2] }).events[0].title === "newer"
+      },
+      {
+        name: "equal event timestamp keeps local",
+        run: () => mergeSyncData({ events: [eventA1] }, { events: [testEvent("evt_a", "same remote", t1)] }).events[0].title === "older"
+      },
+      {
+        name: "newer event tombstone deletes",
+        run: () => mergeSyncData({ events: [eventA1] }, { tombstones: { events: [{ id: "evt_a", deletedAt: t2 }] } }).events.length === 0
+      },
+      {
+        name: "event newer than tombstone survives",
+        run: () => mergeSyncData({ events: [eventA2] }, { tombstones: { events: [{ id: "evt_a", deletedAt: t1 }] } }).events.length === 1
+      },
+      {
+        name: "remote newer todo wins",
+        run: () => mergeSyncData({ todos: [todoA1] }, { todos: [todoA2] }).todos[0].done === true
+      },
+      {
+        name: "newer todo tombstone deletes",
+        run: () => mergeSyncData({ todos: [todoA1] }, { tombstones: { todos: [{ id: "todo_a", deletedAt: t2 }] } }).todos.length === 0
+      },
+      {
+        name: "tombstones merge latest by id",
+        run: () => mergeSyncData(
+          { tombstones: { events: [{ id: "evt_a", deletedAt: t1 }] } },
+          { tombstones: { events: [{ id: "evt_a", deletedAt: t2 }, { id: "evt_b", deletedAt: t1 }] } }
+        ).tombstones.events.length === 2
+      },
+      {
+        name: "remote newer settings set wins",
+        run: () => mergeSyncData(
+          { settings: { categories: categoriesA, defaultReminder: 10, categoriesUpdatedAt: t1 } },
+          { settings: { categories: categoriesB, defaultReminder: 30, categoriesUpdatedAt: t2 } }
+        ).settings.categories[0].key === "home"
+      },
+      {
+        name: "local newer settings set wins",
+        run: () => mergeSyncData(
+          { settings: { categories: categoriesA, defaultReminder: 10, categoriesUpdatedAt: t3 } },
+          { settings: { categories: categoriesB, defaultReminder: 30, categoriesUpdatedAt: t2 } }
+        ).settings.defaultReminder === 10
+      },
+      {
+        name: "empty data normalizes",
+        run: () => {
+          const merged = mergeSyncData({}, {});
+          return Array.isArray(merged.events) && Array.isArray(merged.todos) && merged.settings.categories.length > 0;
+        }
+      },
+      {
+        name: "independent local and remote records both remain",
+        run: () => mergeSyncData({ events: [eventA1] }, { events: [testEvent("evt_b", "remote b", t2)] }).events.length === 2
+      }
+    ];
+
+    const results = tests.map((test) => {
+      try {
+        return { name: test.name, pass: Boolean(test.run()) };
+      } catch (error) {
+        return { name: test.name, pass: false, error: error && error.message ? error.message : String(error) };
+      }
+    });
+    const passCount = results.filter((result) => result.pass).length;
+    console.table(results);
+    console.log(`__syncSelfTest: ${passCount}/${results.length} PASS`);
+    return results.every((result) => result.pass);
+  };
+
+  function testEvent(id, title, updatedAt) {
+    return {
+      id,
+      title,
+      date: "2026-01-01",
+      timeMode: "timed",
+      startTime: "09:00",
+      endTime: null,
+      color: "work",
+      memo: "",
+      reminder: 10,
+      recurrence: null,
+      updatedAt,
+      exceptions: []
+    };
+  }
+
+  function testTodo(id, title, done, updatedAt) {
+    return {
+      id,
+      title,
+      done,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt
+    };
   }
 
   function createId(prefix) {

@@ -123,6 +123,21 @@
             </span>
             <span class="setting-chevron" aria-hidden="true">&gt;</span>
           </button>
+          <section id="syncSection" class="sync-settings" aria-labelledby="syncSettingsTitle">
+            <div class="sync-settings-header">
+              <div>
+                <h3 id="syncSettingsTitle">端末間の同期</h3>
+                <p id="syncStatusText" class="sync-status-text" aria-live="polite"></p>
+              </div>
+            </div>
+            <p id="syncDescription" class="sync-description">同期コードを作ると、ほかの端末と予定・ToDo・カテゴリを自動で同期できます</p>
+            <p id="syncUnavailable" class="sync-unavailable" hidden>同期サーバーが未設定のため利用できません</p>
+            <div class="sync-actions">
+              <button id="startSyncButton" class="primary-button" type="button">同期を開始</button>
+              <button id="addSyncDeviceButton" class="secondary-button" type="button" hidden>別の端末を追加</button>
+              <button id="disconnectSyncButton" class="danger-outline-button" type="button" hidden>同期を解除</button>
+            </div>
+          </section>
           <section class="category-settings" aria-labelledby="categorySettingsTitle">
             <div class="category-settings-header">
               <h3 id="categorySettingsTitle">カテゴリ</h3>
@@ -237,7 +252,7 @@
           </li>
           <li class="help-section">
             <h3><span>8</span>データについて</h3>
-            <p>予定はこの端末のブラウザ内にだけ保存され、サーバーには送られません。端末やブラウザを変えるとデータは引き継がれません。</p>
+            <p>予定はこの端末のブラウザ内に保存されます。同期をONにした場合は、予定・ToDo・カテゴリが同期サーバーにも保存され、ほかの端末と統合されます。</p>
             <p>初期化したいときは、設定の「データを全削除」を使います。</p>
           </li>
         </ol>
@@ -394,6 +409,25 @@
       <div class="modal-actions">
         <span class="action-spacer"></span>
         <button id="closeShareLinkButton" class="primary-button" type="button">閉じる</button>
+      </div>
+    </section>
+  </div>
+
+  <div id="syncLinkModal" class="modal-backdrop" hidden>
+    <section class="modal-card sync-link-card" aria-labelledby="syncLinkTitle" role="dialog" aria-modal="true">
+      <div class="sheet-header">
+        <div>
+          <h2 id="syncLinkTitle">別の端末を追加</h2>
+          <p class="muted-text">追加したい端末でこのリンクを開きます。</p>
+        </div>
+        <button id="closeSyncLinkModal" class="icon-button" type="button" aria-label="閉じる">×</button>
+      </div>
+      <textarea id="syncLinkText" class="share-link-text" rows="4" readonly></textarea>
+      <div class="modal-actions">
+        <button id="copySyncLinkButton" class="secondary-button" type="button">コピー</button>
+        <button id="shareSyncLinkButton" class="secondary-button" type="button">共有</button>
+        <span class="action-spacer"></span>
+        <button id="closeSyncLinkButton" class="primary-button" type="button">閉じる</button>
       </div>
     </section>
   </div>

@@ -1,4 +1,4 @@
-const CACHE_VERSION = "v1";
+const CACHE_VERSION = "v2";
 const CACHE_NAME = `scheduler-${CACHE_VERSION}`;
 
 const CORE_ASSETS = [
@@ -39,6 +39,10 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   const requestUrl = new URL(request.url);
+
+  if (requestUrl.origin === self.location.origin && requestUrl.pathname.startsWith("/api/")) {
+    return;
+  }
 
   if (request.method !== "GET" || requestUrl.origin !== self.location.origin) {
     return;
