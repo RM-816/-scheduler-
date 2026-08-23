@@ -75,7 +75,11 @@
   const els = {};
   const MONTH_RESIZE_DEBOUNCE_MS = 120;
   const MONTH_FIT_EPSILON = 0.5;
+  const SWIPE_MIN_DISTANCE = 48;
+  const SWIPE_HORIZONTAL_RATIO = 1.5;
+  const CALENDAR_SLIDE_MS = 180;
   let monthResizeTimer = null;
+  const calendarSlideTimers = new WeakMap();
 
   document.addEventListener("DOMContentLoaded", init);
 
@@ -118,6 +122,7 @@
     els.prevWeek = byId("prevWeek");
     els.nextWeek = byId("nextWeek");
     els.weekHeading = byId("weekHeading");
+    els.weekCard = document.querySelector(".week-card");
     els.weekAllDay = byId("weekAllDay");
     els.weekTimeline = byId("weekTimeline");
 
@@ -154,6 +159,7 @@
     els.eventModalHint = byId("eventModalHint");
     els.closeEventModal = byId("closeEventModal");
     els.eventForm = byId("eventForm");
+    els.eventFormBody = document.querySelector(".event-form-body");
     els.eventTitle = byId("eventTitle");
     els.eventDate = byId("eventDate");
     els.eventTimeModeGroup = byId("eventTimeModeGroup");
@@ -175,6 +181,7 @@
     els.openCategoryEditorButton = byId("openCategoryEditorButton");
     els.eventCategoryEditorModal = byId("eventCategoryEditorModal");
     els.closeCategoryEditorButton = byId("closeCategoryEditorButton");
+    els.eventCategoryEditorBody = document.querySelector(".category-editor-body");
     els.eventCategorySettingsList = byId("eventCategorySettingsList");
     els.eventAddCategoryButton = byId("eventAddCategoryButton");
 
@@ -200,6 +207,7 @@
 
     els.importModal = byId("importModal");
     els.closeImportModal = byId("closeImportModal");
+    els.importBody = document.querySelector(".import-body");
     els.importText = byId("importText");
     els.ocrPhotoArea = byId("ocrPhotoArea");
     els.ocrUnavailableNotice = byId("ocrUnavailableNotice");
@@ -223,13 +231,11 @@
     });
 
     els.prevMonth.addEventListener("click", () => {
-      state.currentMonth = addMonths(state.currentMonth, -1);
-      renderMonth();
+      navigateMonth(-1);
     });
 
     els.nextMonth.addEventListener("click", () => {
-      state.currentMonth = addMonths(state.currentMonth, 1);
-      renderMonth();
+      navigateMonth(1);
     });
 
     els.todayMonth.addEventListener("click", () => {
@@ -242,14 +248,14 @@
     els.welcomeHelpLink.addEventListener("click", openHelpModal);
 
     els.prevWeek.addEventListener("click", () => {
-      state.currentWeekStart = addDays(state.currentWeekStart, -7);
-      renderWeek();
+      navigateWeek(-1);
     });
 
     els.nextWeek.addEventListener("click", () => {
-      state.currentWeekStart = addDays(state.currentWeekStart, 7);
-      renderWeek();
+      navigateWeek(1);
     });
+
+    setupCalendarSwipeNavigation();
 
     els.addEventFab.addEventListener("click", () => {
       openEventForm({ date: defaultDateForAdd() });
@@ -431,6 +437,124 @@
     renderAll();
   }
 
+  function navigateMonth(offset) {
+    state.currentMonth = addMonths(state.currentMonth, offset);
+    renderMonth();
+    animateCalendarSurface(els.monthGrid, offset);
+  }
+
+  function navigateWeek(offset) {
+    state.currentWeekStart = addDays(state.currentWeekStart, offset * 7);
+    renderWeek();
+    animateCalendarSurface(els.weekCard, offset);
+  }
+
+  function setupCalendarSwipeNavigation() {
+    setupSwipeNavigation(els.monthGrid, (direction) => navigateMonth(direction));
+    setupSwipeNavigation(els.weekAllDay, (direction) => navigateWeek(direction));
+  }
+
+  function setupSwipeNavigation(surface, onNavigate) {
+    if (!surface) {
+      return;
+    }
+
+    let startX = 0;
+    let startY = 0;
+    let currentX = 0;
+    let currentY = 0;
+    let tracking = false;
+    let suppressClickUntil = 0;
+
+    surface.addEventListener("touchstart", (event) => {
+      if (event.touches.length !== 1) {
+        tracking = false;
+        return;
+      }
+      const touch = event.touches[0];
+      startX = touch.clientX;
+      startY = touch.clientY;
+      currentX = startX;
+      currentY = startY;
+      tracking = true;
+    }, { passive: true });
+
+    surface.addEventListener("touchmove", (event) => {
+      if (!tracking || event.touches.length !== 1) {
+        return;
+      }
+      const touch = event.touches[0];
+      currentX = touch.clientX;
+      currentY = touch.clientY;
+      if (isCalendarSwipe(currentX - startX, currentY - startY)) {
+        event.preventDefault();
+      }
+    }, { passive: false });
+
+    surface.addEventListener("touchend", (event) => {
+      if (!tracking) {
+        return;
+      }
+      const touch = event.changedTouches[0];
+      if (touch) {
+        currentX = touch.clientX;
+        currentY = touch.clientY;
+      }
+      const dx = currentX - startX;
+      const dy = currentY - startY;
+      tracking = false;
+
+      if (!isCalendarSwipe(dx, dy)) {
+        return;
+      }
+
+      suppressClickUntil = performance.now() + 350;
+      event.preventDefault();
+      event.stopPropagation();
+      onNavigate(dx < 0 ? 1 : -1);
+    }, { passive: false });
+
+    surface.addEventListener("touchcancel", () => {
+      tracking = false;
+    }, { passive: true });
+
+    surface.addEventListener("click", (event) => {
+      if (performance.now() > suppressClickUntil) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === "function") {
+        event.stopImmediatePropagation();
+      }
+    }, true);
+  }
+
+  function isCalendarSwipe(dx, dy) {
+    const absX = Math.abs(dx);
+    const absY = Math.abs(dy);
+    return absX >= SWIPE_MIN_DISTANCE && absX > absY * SWIPE_HORIZONTAL_RATIO;
+  }
+
+  function animateCalendarSurface(surface, direction) {
+    if (!surface) {
+      return;
+    }
+    const className = direction > 0 ? "is-slide-forward" : "is-slide-backward";
+    const existingTimer = calendarSlideTimers.get(surface);
+    if (existingTimer) {
+      window.clearTimeout(existingTimer);
+    }
+    surface.classList.remove("is-slide-forward", "is-slide-backward");
+    void surface.offsetWidth;
+    surface.classList.add(className);
+    const timer = window.setTimeout(() => {
+      surface.classList.remove(className);
+      calendarSlideTimers.delete(surface);
+    }, CALENDAR_SLIDE_MS);
+    calendarSlideTimers.set(surface, timer);
+  }
+
   function renderMonth() {
     const year = state.currentMonth.getFullYear();
     const month = state.currentMonth.getMonth();
@@ -535,6 +659,12 @@
 
   function closeHelpModal() {
     els.helpModal.hidden = true;
+  }
+
+  function scrollModalBodyToTop(element) {
+    if (element) {
+      element.scrollTop = 0;
+    }
   }
 
   function scheduleMonthResizeRender() {
@@ -1487,6 +1617,7 @@
 
     updateEventReminderAvailability();
     els.eventModal.hidden = false;
+    scrollModalBodyToTop(els.eventFormBody);
     setTimeout(() => els.eventTitle.focus(), 0);
   }
 
@@ -1494,6 +1625,7 @@
     state.categoryPaletteFor = null;
     els.eventCategoryEditorModal.hidden = false;
     renderCategoryEditors();
+    scrollModalBodyToTop(els.eventCategoryEditorBody);
     setTimeout(() => els.closeCategoryEditorButton.focus(), 0);
   }
 
@@ -2361,6 +2493,7 @@
     resetImportModal();
     updateOcrAvailability();
     els.importModal.hidden = false;
+    scrollModalBodyToTop(els.importBody);
     setTimeout(() => els.importText.focus(), 0);
   }
 

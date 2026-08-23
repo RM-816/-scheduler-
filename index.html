@@ -271,6 +271,7 @@
         <button id="closeEventModal" class="icon-button" type="button" aria-label="閉じる">×</button>
       </div>
       <form id="eventForm" class="event-form">
+        <div class="modal-body event-form-body">
         <label>
           <span>タイトル</span>
           <input id="eventTitle" type="text" required maxlength="80">
@@ -339,6 +340,7 @@
           <textarea id="eventMemo" rows="3" maxlength="300"></textarea>
         </label>
         <p id="formError" class="form-error" role="alert"></p>
+        </div>
         <div class="modal-actions">
           <button id="deleteEventButton" class="danger-outline-button" type="button" hidden>削除</button>
           <button id="shareEventButton" class="secondary-button" type="button" hidden>共有</button>
@@ -401,8 +403,12 @@
         </div>
         <button id="closeCategoryEditorButton" class="icon-button" type="button" aria-label="閉じる">×</button>
       </div>
-      <div id="eventCategorySettingsList" class="category-settings-list"></div>
-      <button id="eventAddCategoryButton" class="secondary-button category-add-button full-button" type="button">＋カテゴリを追加</button>
+      <div class="modal-body category-editor-body">
+        <div id="eventCategorySettingsList" class="category-settings-list"></div>
+      </div>
+      <div class="modal-actions category-editor-actions">
+        <button id="eventAddCategoryButton" class="secondary-button category-add-button full-button" type="button">＋カテゴリを追加</button>
+      </div>
     </section>
   </div>
 
@@ -416,7 +422,7 @@
         <button id="closeImportModal" class="icon-button" type="button" aria-label="閉じる">×</button>
       </div>
 
-      <div class="import-body">
+      <div class="modal-body import-body">
         <section id="ocrPhotoArea" class="import-section">
           <div id="ocrUnavailableNotice" class="ocr-unavailable" hidden>
             写真読み取りを使うには「スケジューラーを起動.bat」をダブルクリックして起動してください
@@ -442,13 +448,12 @@
           <textarea id="importText" rows="7" placeholder="例: 9月1日(火) 10:00 始業式（1行に1件）"></textarea>
         </label>
 
-        <div class="import-actions">
-          <button id="parseImportButton" class="primary-button" type="button">解析</button>
-          <button id="registerImportButton" class="secondary-button" type="button" disabled>選択した0件を登録</button>
-        </div>
-
         <div id="importCandidateSummary" class="muted-text" aria-live="polite"></div>
         <div id="importCandidateList" class="import-candidate-list"></div>
+      </div>
+      <div class="modal-actions import-actions">
+        <button id="parseImportButton" class="primary-button" type="button">解析</button>
+        <button id="registerImportButton" class="secondary-button" type="button" disabled>選択した0件を登録</button>
       </div>
     </section>
   </div>
