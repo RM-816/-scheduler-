@@ -75,10 +75,13 @@
   const els = {};
   const MONTH_RESIZE_DEBOUNCE_MS = 120;
   const MONTH_FIT_EPSILON = 0.5;
+  const WIDE_LAYOUT_QUERY = "(min-width: 900px)";
+  const DESKTOP_MONTH_EVENT_CHIP_LIMIT = 6;
   const SWIPE_MIN_DISTANCE = 48;
   const SWIPE_HORIZONTAL_RATIO = 1.5;
   const CALENDAR_SLIDE_MS = 180;
   let monthResizeTimer = null;
+  let wideLayoutMedia = null;
   const calendarSlideTimers = new WeakMap();
 
   document.addEventListener("DOMContentLoaded", init);
@@ -90,6 +93,7 @@
     state.todos = loadTodos();
     migrateCategoriesIfNeeded();
     setupOptionalIcon();
+    setupWideDayPanelLayout();
     bindEvents();
     renderAll();
     startNotificationTimer();
@@ -146,7 +150,9 @@
     els.chatInput = byId("chatInput");
     els.addEventFab = byId("addEventFab");
 
+    els.desktopDaySidebar = byId("desktopDaySidebar");
     els.dayPanelBackdrop = byId("dayPanelBackdrop");
+    els.dayPanel = document.querySelector(".day-panel");
     els.selectedDayTitle = byId("selectedDayTitle");
     els.selectedDayHoliday = byId("selectedDayHoliday");
     els.selectedDayEvents = byId("selectedDayEvents");
@@ -243,6 +249,7 @@
       state.currentMonth = startOfMonth(today);
       state.selectedDate = formatDate(today);
       renderMonth();
+      renderDayPanelIfVisible();
     });
     els.closeWelcomeCard.addEventListener("click", dismissWelcomeCard);
     els.welcomeHelpLink.addEventListener("click", openHelpModal);
@@ -389,6 +396,50 @@
     window.addEventListener("orientationchange", scheduleMonthResizeRender);
   }
 
+  function setupWideDayPanelLayout() {
+    if (typeof window.matchMedia === "function") {
+      wideLayoutMedia = window.matchMedia(WIDE_LAYOUT_QUERY);
+      if (typeof wideLayoutMedia.addEventListener === "function") {
+        wideLayoutMedia.addEventListener("change", handleWideLayoutChange);
+      } else if (typeof wideLayoutMedia.addListener === "function") {
+        wideLayoutMedia.addListener(handleWideLayoutChange);
+      }
+    }
+    syncDayPanelLayout();
+  }
+
+  function handleWideLayoutChange() {
+    syncDayPanelLayout();
+    renderMonth();
+    renderDayPanelIfVisible();
+  }
+
+  function isWideLayout() {
+    if (wideLayoutMedia) {
+      return wideLayoutMedia.matches;
+    }
+    return window.innerWidth >= 900;
+  }
+
+  function syncDayPanelLayout() {
+    if (!els.dayPanel || !els.dayPanelBackdrop || !els.desktopDaySidebar) {
+      return;
+    }
+
+    if (isWideLayout()) {
+      els.dayPanelBackdrop.hidden = true;
+      if (els.dayPanel.parentElement !== els.desktopDaySidebar) {
+        els.desktopDaySidebar.appendChild(els.dayPanel);
+      }
+      return;
+    }
+
+    if (els.dayPanel.parentElement !== els.dayPanelBackdrop) {
+      els.dayPanelBackdrop.appendChild(els.dayPanel);
+    }
+    els.dayPanelBackdrop.hidden = true;
+  }
+
   function renderAll() {
     renderHeader();
     renderTabs();
@@ -397,6 +448,7 @@
     renderTodos();
     renderEventColorOptions();
     renderSettings();
+    renderDayPanelIfVisible();
   }
 
   function renderHeader() {
@@ -702,7 +754,8 @@
     const chipHeights = chips.map((chip) => chip.getBoundingClientRect().height);
     const moreHeight = more.getBoundingClientRect().height;
     const gap = measureMonthStackGap(stack, chips, more);
-    const visibleCount = fitMonthVisibleEventCount(chipHeights, moreHeight, gap, availableHeight);
+    const fittedVisibleCount = fitMonthVisibleEventCount(chipHeights, moreHeight, gap, availableHeight);
+    const visibleCount = Math.min(fittedVisibleCount, monthEventChipLimit());
 
     return {
       chips,
@@ -749,6 +802,10 @@
     }
 
     return 0;
+  }
+
+  function monthEventChipLimit() {
+    return isWideLayout() ? DESKTOP_MONTH_EVENT_CHIP_LIMIT : Number.POSITIVE_INFINITY;
   }
 
   function stackItemsHeight(itemHeights, count, gap) {
@@ -1499,16 +1556,25 @@
     setSelectedColor(selectedKey);
     renderMonth();
     renderWeek();
-    if (!els.dayPanelBackdrop.hidden) {
-      renderDayPanel();
-    }
+    renderDayPanelIfVisible();
   }
 
   function openDayPanel(dateStr) {
     state.selectedDate = dateStr;
+    syncDayPanelLayout();
     renderMonth();
     renderDayPanel();
+    if (isWideLayout()) {
+      els.dayPanelBackdrop.hidden = true;
+      return;
+    }
     els.dayPanelBackdrop.hidden = false;
+  }
+
+  function renderDayPanelIfVisible() {
+    if (isWideLayout() || !els.dayPanelBackdrop.hidden) {
+      renderDayPanel();
+    }
   }
 
   function renderDayPanel() {
@@ -2082,9 +2148,6 @@
     closeSharedEventsModal();
     removeShareHash();
     renderAll();
-    if (!els.dayPanelBackdrop.hidden) {
-      renderDayPanel();
-    }
     showToast(`${additions.length}件を追加しました`);
   }
 
@@ -2166,9 +2229,6 @@
     saveEvents();
     closeEventModal();
     renderAll();
-    if (!els.dayPanelBackdrop.hidden) {
-      renderDayPanel();
-    }
   }
 
   function readEventForm() {
@@ -2291,9 +2351,6 @@
     closeChoiceModal();
     closeEventModal();
     renderAll();
-    if (!els.dayPanelBackdrop.hidden) {
-      renderDayPanel();
-    }
   }
 
   function deleteWholeEvent(eventId) {
@@ -2302,9 +2359,6 @@
     closeChoiceModal();
     closeEventModal();
     renderAll();
-    if (!els.dayPanelBackdrop.hidden) {
-      renderDayPanel();
-    }
   }
 
   function handleChatSubmit(event) {
@@ -2724,9 +2778,6 @@
     saveEvents();
     closeImportModal();
     renderAll();
-    if (!els.dayPanelBackdrop.hidden) {
-      renderDayPanel();
-    }
     showToast(`${selected.length}件登録しました`);
   }
 

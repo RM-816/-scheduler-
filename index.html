@@ -45,6 +45,7 @@
     <div id="toastArea" class="toast-area" aria-live="polite" aria-atomic="true"></div>
 
     <main class="app-main">
+      <div class="view-stack">
       <section id="monthView" class="view is-active" aria-labelledby="monthHeading">
         <div class="view-toolbar">
           <button id="prevMonth" class="icon-button" type="button" aria-label="前月">‹</button>
@@ -136,6 +137,8 @@
           </div>
         </div>
       </section>
+      </div>
+      <div id="desktopDaySidebar" class="desktop-day-sidebar" role="complementary" aria-label="選択日の予定"></div>
     </main>
 
     <form id="chatBar" class="chat-bar" autocomplete="off">
